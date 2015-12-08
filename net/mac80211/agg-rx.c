@@ -343,7 +343,8 @@ void __ieee80211_start_rx_ba_session(struct sta_info *sta,
 	for (i = 0; i < buf_size; i++)
 		__skb_queue_head_init(&tid_agg_rx->reorder_buf[i]);
 
-	ret = drv_ampdu_action(local, sta->sdata, &params);
+	ret = drv_ampdu_action(local, sta->sdata, IEEE80211_AMPDU_RX_START,
+			       &sta->sta, tid, &start_seq_num, buf_size, false);
 	ht_dbg(sta->sdata, "Rx A-MPDU request on %pM tid %d result %d\n",
 	       sta->sta.addr, tid, ret);
 	if (ret) {
