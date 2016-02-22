@@ -320,7 +320,6 @@ static inline u64 timekeeping_delta_to_ns(struct tk_read_base *tkr,
 					  cycle_t delta)
 {
 	u64 nsec;
-
 	nsec = delta * tkr->mult + tkr->xtime_nsec;
 	nsec >>= tkr->shift;
 
