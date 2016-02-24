@@ -308,7 +308,7 @@ static struct ion_buffer *ion_buffer_create(struct ion_heap *heap,
 				heap->ops->buffer_zero(buffer);
 
 				if (flags & ION_FLAG_CACHED)
-					dma_sync_sg_for_cpu(NULL, table->sgl,
+					dma_sync_sg_for_device(NULL, table->sgl,
 					table->nents, DMA_BIDIRECTIONAL);
 
 			}
@@ -742,7 +742,7 @@ static void ion_free_nolock(struct ion_client *client, struct ion_handle *handle
 	ion_handle_put_nolock(handle);
 }
 
-static int user_ion_free_nolock(struct ion_client *client, struct ion_handle *handle)
+static void user_ion_free_nolock(struct ion_client *client, struct ion_handle *handle)
 {
 	bool valid_handle;
 
@@ -751,14 +751,13 @@ static int user_ion_free_nolock(struct ion_client *client, struct ion_handle *ha
 	valid_handle = ion_handle_validate(client, handle);
 	if (!valid_handle) {
 		WARN(1, "%s: invalid handle passed to free.\n", __func__);
-		return -EINVAL;
+		return;
 	}
 	if (!handle->user_ref_count > 0) {
 		WARN(1, "%s: User does not have access!\n", __func__);
-		return -EINVAL;
+		return;
 	}
 	user_ion_handle_put_nolock(handle);
-	return 0;
 }
 
 void ion_free(struct ion_client *client, struct ion_handle *handle)
@@ -1610,14 +1609,14 @@ struct ion_handle *ion_import_dma_buf(struct ion_client *client, int fd)
 
 	dmabuf = dma_buf_get(fd);
 	if (IS_ERR(dmabuf)) {
-		pr_err("%s: can't get dmabuf!\n", __func__);
+		pr_err("%s: can't get fd is %d's dmabuf!\n", __func__, fd);
 		return ERR_CAST(dmabuf);
 	}
 	/* if this memory came from ion */
 
 	if (dmabuf->ops != &dma_buf_ops) {
-		pr_err("%s: can not import dmabuf from another exporter\n",
-		       __func__);
+		pr_err("%s: can not import fd is %d's dmabuf from another exporter\n",
+		       __func__, fd);
 		dma_buf_put(dmabuf);
 		return ERR_PTR(-EINVAL);
 	}
@@ -1799,11 +1798,7 @@ static long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			mutex_unlock(&client->lock);
 			return PTR_ERR(handle);
 		}
-		ret = user_ion_free_nolock(client, handle);
-		if (ret < 0) {
-			mutex_unlock(&client->lock);
-			break;
-		}
+		user_ion_free_nolock(client, handle);
 		ion_handle_put_nolock(handle);
 		mutex_unlock(&client->lock);
 		break;
@@ -1908,11 +1903,7 @@ static long ion_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 					__func__, cmd);
 			if (cleanup_handle) {
 				mutex_lock(&client->lock);
-				ret = user_ion_free_nolock(client, cleanup_handle);
-				if (ret < 0) {
-					mutex_unlock(&client->lock);
-					return -EFAULT;
-				}
+				user_ion_free_nolock(client, cleanup_handle);
 				ion_handle_put_nolock(cleanup_handle);
 				mutex_unlock(&client->lock);
 			}
