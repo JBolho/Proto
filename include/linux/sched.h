@@ -2095,6 +2095,9 @@ struct task_struct {
 	struct reclaim_result *proc_reclaimed_result;
 #endif
 	int pagefault_disabled;
+#ifdef CONFIG_MMU
+	struct list_head oom_reaper_list;
+#endif
 /* CPU-specific state of this task */
 	struct thread_struct thread;
 /*
