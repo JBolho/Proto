@@ -487,6 +487,9 @@ static int ext4_d_revalidate(struct dentry *dentry, unsigned int flags)
 	struct ext4_crypt_info *ci;
 	int dir_has_key, cached_with_key;
 
+	if (flags & LOOKUP_RCU)
+		return -ECHILD;
+
 	dir = dget_parent(dentry);
 	if (!ext4_encrypted_inode(d_inode(dir))) {
 		dput(dir);
