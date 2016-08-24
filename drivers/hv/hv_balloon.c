@@ -722,8 +722,8 @@ static void hv_online_page(struct page *pg)
 	list_for_each(cur, &dm_device.ha_region_list) {
 		has = list_entry(cur, struct hv_hotadd_state, list);
 		cur_start_pgp = (unsigned long)
-			pfn_to_page(has->covered_start_pfn);
-		cur_end_pgp = (unsigned long)pfn_to_page(has->covered_end_pfn);
+			pfn_to_page(has->start_pfn);
+		cur_end_pgp = (unsigned long)pfn_to_page(has->end_pfn);
 
 		/* The page belongs to a different HAS. */
 		if (((unsigned long)pg < cur_start_pgp) ||
