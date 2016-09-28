@@ -66,6 +66,7 @@
 #include <linux/kexec.h>
 #include <linux/boost_sigkill_free.h>
 #include <linux/bpf.h>
+#include <linux/mount.h>
 
 #include <linux/mount.h>
 #include <asm/uaccess.h>
