@@ -2112,7 +2112,7 @@ static int netlink_dump(struct sock *sk)
 	if (!skb) {
 		alloc_size = alloc_min_size;
 		skb = netlink_alloc_skb(sk, alloc_size, nlk->portid,
-					GFP_KERNEL);
+					(GFP_KERNEL & ~__GFP_DIRECT_RECLAIM));
 	}
 	if (!skb)
 		goto errout_skb;
