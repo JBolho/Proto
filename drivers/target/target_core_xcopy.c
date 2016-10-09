@@ -245,16 +245,16 @@ static int target_xcopy_parse_target_descriptors(struct se_cmd *se_cmd,
 		rc = target_xcopy_locate_se_dev_e4(se_cmd, xop, true);
 	else
 		rc = target_xcopy_locate_se_dev_e4(se_cmd, xop, false);
-
 	/*
 	 * If a matching IEEE NAA 0x83 descriptor for the requested device
 	 * is not located on this node, return COPY_ABORTED with ASQ/ASQC
 	 * 0x0d/0x02 - COPY_TARGET_DEVICE_NOT_REACHABLE to request the
 	 * initiator to fall back to normal copy method.
 	 */
-	if (rc < 0)
+	if (rc < 0) {
 		*sense_ret = TCM_COPY_TARGET_DEVICE_NOT_REACHABLE;
 		goto out;
+	}
 
 	pr_debug("XCOPY TGT desc: Source dev: %p NAA IEEE WWN: 0x%16phN\n",
 		 xop->src_dev, &xop->src_tid_wwn[0]);
