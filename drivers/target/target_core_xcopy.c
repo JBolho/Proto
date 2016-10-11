@@ -828,14 +828,14 @@ static void target_xcopy_do_work(struct work_struct *work)
 out:
 	xcopy_pt_undepend_remotedev(xop);
 	kfree(xop);
-
 	/*
 	 * Don't override an error scsi status if it has already been set
 	 */
 	if (ec_cmd->scsi_status == SAM_STAT_GOOD) {
-		pr_warn_ratelimited("target_xcopy_do_work: Setting X-COPY CHECK_CONDITION ->sending response\n",rc);
+		pr_warn_ratelimited("target_xcopy_do_work: rc: %d, Setting X-COPY"
+			" CHECK_CONDITION -> sending response\n", rc);
 		ec_cmd->scsi_status = SAM_STAT_CHECK_CONDITION;
-	 }
+	}
 	target_complete_cmd(ec_cmd, SAM_STAT_CHECK_CONDITION);
 }
 
