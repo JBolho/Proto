@@ -348,6 +348,11 @@ static int ptrace_attach(struct task_struct *task, long request,
 
 	task_lock(task);
 	retval = __ptrace_may_access(task, PTRACE_MODE_ATTACH_REALCREDS);
+	if (!retval) {
+		struct mm_struct *mm = task->mm;
+		if (mm && ns_capable(mm->user_ns, CAP_SYS_PTRACE))
+			flags |= PT_PTRACE_CAP;
+	}
 	task_unlock(task);
 	if (retval)
 		goto unlock_creds;
