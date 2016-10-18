@@ -116,6 +116,13 @@ int cpu_suspend(unsigned long arg, int (*fn)(unsigned long))
 				CONFIG_ARM64_PAN));
 
 		/*
+		 * PSTATE was not saved over suspend/resume, re-enable any
+		 * detected features that might not have been set correctly.
+		 */
+		asm(ALTERNATIVE("nop", SET_PSTATE_PAN(1), ARM64_HAS_PAN,
+				CONFIG_ARM64_PAN));
+
+		/*
 		 * Restore HW breakpoint registers to sane values
 		 * before debug exceptions are possibly reenabled
 		 * through local_dbg_restore.
