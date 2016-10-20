@@ -111,7 +111,6 @@ static void set_ping_group_range(struct ctl_table *table, kgid_t low, kgid_t hig
 	struct net *net =
 		container_of(table->data, struct net, ipv4.ping_group_range.range);
 	write_seqlock_bh(&net->ipv4.ping_group_range.lock);
-
 	data[0] = low;
 	data[1] = high;
 	write_sequnlock_bh(&net->ipv4.ping_group_range.lock);
