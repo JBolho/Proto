@@ -1689,6 +1689,7 @@ static void binder_put_node(struct binder_node *node)
 	binder_dec_node_tmpref(node);
 }
 
+
 static struct binder_ref *binder_get_ref_olocked(struct binder_proc *proc,
 						 u32 desc, bool need_strong_ref)
 {
