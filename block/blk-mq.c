@@ -1534,12 +1534,8 @@ static blk_qc_t blk_mq_make_request(struct request_queue *q, struct bio *bio)
 		blk_mq_put_ctx(data.ctx);
 		if (!old_rq)
 			goto done;
-	#ifdef CONFIG_HISI_BLK_MQ
-		old_rq->mq_ctx_dispatch = data.ctx;
-	#endif
-
 		if (test_bit(BLK_MQ_S_STOPPED, &data.hctx->state) ||
-			blk_mq_direct_issue_request(old_rq, &cookie) != 0)
+		    blk_mq_direct_issue_request(old_rq, &cookie) != 0)
 			blk_mq_insert_request(old_rq, false, true, true);
 		goto done;
 	}
