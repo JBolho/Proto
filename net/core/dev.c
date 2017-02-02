@@ -1708,7 +1708,7 @@ void net_enable_timestamp(void)
 	atomic_inc(&netstamp_needed_deferred);
 	schedule_work(&netstamp_work);
 #else
-	static_key_slow_inc(&netstamp_needed);
+	static_key_slow_dec(&netstamp_needed);
 #endif
 }
 EXPORT_SYMBOL(net_enable_timestamp);
