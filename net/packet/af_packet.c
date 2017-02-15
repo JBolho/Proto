@@ -1746,17 +1746,17 @@ static struct packet_fanout *fanout_release(struct sock *sk)
 	if (f) {
 		po->fanout = NULL;
 
-		if (atomic_dec_and_test(&f->sk_ref)) {
+		if (atomic_dec_and_test(&f->sk_ref))
 			list_del(&f->list);
-			dev_remove_pack(&f->prot_hook);
-			fanout_release_data(f);
-			kfree(f);
-		}
+		else
+			f = NULL;
 
 		if (po->rollover)
 			kfree_rcu(po->rollover, rcu);
 	}
 	mutex_unlock(&fanout_mutex);
+
+	return f;
 }
 
 static bool packet_extra_vlan_len_allowed(const struct net_device *dev,
@@ -3901,7 +3901,6 @@ static int packet_notifier(struct notifier_block *this,
 				}
 				if (msg == NETDEV_UNREGISTER) {
 					packet_cached_dev_reset(po);
-					fanout_release(sk);
 					po->ifindex = -1;
 					if (po->prot_hook.dev)
 						dev_put(po->prot_hook.dev);
