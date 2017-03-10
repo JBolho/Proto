@@ -2251,7 +2251,14 @@ end_io:
  */
 blk_qc_t generic_make_request(struct bio *bio)
 {
-	struct bio_list bio_list_on_stack;
+        /*
+         * bio_list_on_stack[0] contains bios submitted by the current
+         * make_request_fn.
+         * bio_list_on_stack[1] contains bios that were submitted before
+         * the current make_request_fn, but that haven't been processed
+         * yet.
+         */
+        struct bio_list bio_list_on_stack[2];
 	blk_qc_t ret = BLK_QC_T_NONE;/*lint !e501*/
 
 #ifdef CONFIG_HISI_BLK_CORE
@@ -2289,8 +2296,8 @@ blk_qc_t generic_make_request(struct bio *bio)
 	 * it is non-NULL, then a make_request is active, and new requests
 	 * should be added at the tail
 	 */
-	if (unlikely(current->bio_list)) {
-		bio_list_add(current->bio_list, bio);
+	if (current->bio_list) {
+		bio_list_add(&current->bio_list[0], bio);
 		goto out;
 	}
 
@@ -2309,16 +2316,16 @@ blk_qc_t generic_make_request(struct bio *bio)
 	 * bio_list, and call into ->make_request() again.
 	 */
 	BUG_ON(bio->bi_next);
-	bio_list_init(&bio_list_on_stack);
-	current->bio_list = &bio_list_on_stack;
+	bio_list_init(&bio_list_on_stack[0]);
+	current->bio_list = bio_list_on_stack;
 	do {
 		struct request_queue *q = bdev_get_queue(bio->bi_bdev);
 		if (likely(blk_queue_enter(q, __GFP_DIRECT_RECLAIM) == 0)) {
-			struct bio_list lower, same, hold;
+			struct bio_list lower, same;
 
 			/* Create a fresh bio_list for all subordinate requests */
-			hold = bio_list_on_stack;
-			bio_list_init(&bio_list_on_stack);
+                        bio_list_on_stack[1] = bio_list_on_stack[0];
+                        bio_list_init(&bio_list_on_stack[0]);
 #ifdef CONFIG_HISI_IO_LATENCY_TRACE
 			bio_latency_check(bio,BIO_PROC_STAGE_GENERIC_MAKE_REQ);
 #endif
@@ -2330,19 +2337,19 @@ blk_qc_t generic_make_request(struct bio *bio)
 			 */
 			bio_list_init(&lower);
 			bio_list_init(&same);
-			while ((bio = bio_list_pop(&bio_list_on_stack)) != NULL)
+			while ((bio = bio_list_pop(&bio_list_on_stack[0])) != NULL)
 				if (q == bdev_get_queue(bio->bi_bdev))
 					bio_list_add(&same, bio);
 				else
 					bio_list_add(&lower, bio);
 			/* now assemble so we handle the lowest level first */
-			bio_list_merge(&bio_list_on_stack, &lower);
-			bio_list_merge(&bio_list_on_stack, &same);
-			bio_list_merge(&bio_list_on_stack, &hold);
+			bio_list_merge(&bio_list_on_stack[0], &lower);
+			bio_list_merge(&bio_list_on_stack[0], &same);
+			bio_list_merge(&bio_list_on_stack[0], &bio_list_on_stack[1]);
 		} else {
 			bio_io_error(bio);
 		}
-		bio = bio_list_pop(current->bio_list);
+		bio = bio_list_pop(&bio_list_on_stack[0]);
 	} while (bio);
 	current->bio_list = NULL; /* deactivate */
 
