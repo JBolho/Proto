@@ -186,8 +186,7 @@ static inline void ahash_request_complete(struct ahash_request *req, int err)
 	req->base.complete(&req->base, err);
 }
 
-static inline u32 ahash_request_flags(struct ahash_request
-				*req)
+static inline u32 ahash_request_flags(struct ahash_request *req)
 {
 	return req->base.flags;
 }
