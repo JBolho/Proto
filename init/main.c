@@ -87,6 +87,9 @@
 #include <asm/setup.h>
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
+#ifdef CONFIG_KAISER
+#include <asm/kaiser.h>
+#endif
 
 #if (defined CONFIG_HUAWEI_KERNEL_STACK_RANDOMIZE) || \
 	(defined CONFIG_HUAWEI_KERNEL_STACK_RANDOMIZE_STRONG)
@@ -504,6 +507,9 @@ static void __init mm_init(void)
 	pgtable_init();
 	vmalloc_init();
 	ioremap_huge_init();
+#ifdef CONFIG_KAISER
+	kaiser_init();
+#endif
 }
 
 asmlinkage __visible void __init start_kernel(void)
