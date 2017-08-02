@@ -61,6 +61,7 @@
 #include <linux/wait.h>
 #include <linux/ioprio.h>
 
+struct static_key cpusets_pre_enable_key __read_mostly = STATIC_KEY_INIT_FALSE;
 struct static_key cpusets_enabled_key __read_mostly = STATIC_KEY_INIT_FALSE;
 
 #ifdef CONFIG_ROW_OPTIMIZATION
