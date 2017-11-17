@@ -1001,6 +1001,9 @@ static long pipe_set_size(struct pipe_inode_info *pipe, unsigned long nr_pages)
 {
 	struct pipe_buffer *bufs;
 
+	if (!nr_pages)
+		return -EINVAL;
+
 	/*
 	 * We can shrink the pipe, if arg >= pipe->nrbufs. Since we don't
 	 * expect a lot of shrink+grow operations, just free and allocate
@@ -1045,7 +1048,7 @@ static long pipe_set_size(struct pipe_inode_info *pipe, unsigned long nr_pages)
 
 /*
  * Currently we rely on the pipe array holding a power-of-2 number
- * of pages.
+ * of pages. Returns 0 on error.
  */
 static inline unsigned int round_pipe_size(unsigned int size)
 {
