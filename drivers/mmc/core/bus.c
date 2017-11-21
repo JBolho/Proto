@@ -206,8 +206,12 @@ static int mmc_bus_suspend(struct device *dev)
 			__func__, __LINE__, ret);
 		(void)pm_generic_resume(dev);
 	}
+#else
+	if (ret)
+		pm_generic_resume(dev);
 #endif
 	printk("%s:%d %d--\n", __func__, __LINE__, ret);
+
 	return ret;
 }
 
