@@ -355,7 +355,7 @@ struct tcp_sock {
 
 /* Receiver queue space */
 	struct {
-		int	space;
+		u32	space;
 		u32	seq;
 		u32	time;
 #ifdef CONFIG_TCP_AUTOTUNING
