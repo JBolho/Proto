@@ -1,0 +1,7 @@
+--- arch/arm64/configs/merge_hi6250_defconfig
++++ arch/arm64/configs/merge_hi6250_defconfig
+@@ -4595,3 +4595,4 @@ CONFIG_WIREGUARD=y
+ # CONFIG_WIREGUARD_DEBUG is not set
+ CONFIG_HUAWEI_LCD_PANEL_DARKNESS_MOD=y
+ CONFIG_TOUCHBOOST=y
++CONFIG_VNSWAP=y
