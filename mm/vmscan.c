@@ -166,12 +166,12 @@ struct scan_control {
 /*
  * Kswapd swappiness, from 0 - 200.  Higher means more swappy.
  */
-int vm_swappiness = 60;
+int vm_swappiness = 0;
 #ifdef CONFIG_HISI_DIRECT_SWAPPINESS
 /*
  * Direct reclaim swappiness, exptct 0 - 60. Higher means more swappy and slower.
  */
-int direct_vm_swappiness = 60;
+int direct_vm_swappiness = 0;
 #endif
 /*
  * The total number of pages which are beyond the high watermark within all
