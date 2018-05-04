@@ -33,7 +33,7 @@ config HISI_CPUFREQ_DT
 
 config HISI_HW_VOTE_CPU_FREQ
 	bool "Hisilicon cpufreq-hw_vote enable"
-	depends on HISI_CPUFREQ_DT
+	depends on HISI_CPUFREQ_DT && HISI_HW_VOTE
 	default n
 	help
 	  Hisilicon cpufreq-hw_vote enable.
@@ -58,3 +58,17 @@ config CPU_FREQ_POWER_STAT
 	default n
 	help
 	  Keep track of amount of power each task consumes and report power per uid
+
+config HISI_CPUFREQ_LOWTEMP
+	bool "Hisilicon low temperature cpu frequency set enable"
+	depends on CPUFREQ_DT
+	default n
+	help
+	  Hisilicon low temperature cpu frequency set enable.
+
+config HISI_CPUFREQ_LOWTEMP_DEBUG
+	bool "Hisilicon low temperature cpu frequency set debug enable"
+	depends on HISI_CPUFREQ_LOWTEMP && HISI_DEBUG_FS
+	default n
+	help
+	  Hisilicon low temperature cpu frequency set debug enable.

@@ -90,6 +90,11 @@ static unsigned int default_target_loads[] = {DEFAULT_TARGET_LOAD};
 static unsigned int default_above_hispeed_delay[] = {
 	DEFAULT_ABOVE_HISPEED_DELAY };
 
+#ifdef CONFIG_HISI_CPUFREQ
+#define DEFAULT_MIN_SAMPLE_TIME (80 * USEC_PER_MSEC)
+static unsigned int default_min_sample_time[] = {DEFAULT_MIN_SAMPLE_TIME};
+#endif
+
 struct cpufreq_interactive_tunables {
 	int usage_count;
 	/* Hi speed to bump to from lo speed when load burst (default max) */
@@ -105,8 +110,14 @@ struct cpufreq_interactive_tunables {
 	 * The minimum amount of time to spend at a frequency before we can ramp
 	 * down.
 	 */
+#ifdef CONFIG_HISI_CPUFREQ
+	spinlock_t min_sample_time_lock;
+	unsigned int *min_sample_time;
+	int nmin_sample_time;
+#else
 #define DEFAULT_MIN_SAMPLE_TIME (80 * USEC_PER_MSEC)
 	unsigned long min_sample_time;
+#endif
 	/*
 	 * The sample rate of the timer used to increase frequency
 	 */
@@ -253,6 +264,26 @@ static unsigned int freq_to_targetload(
 	spin_unlock_irqrestore(&tunables->target_loads_lock, flags);
 	return ret;
 }
+
+#ifdef CONFIG_HISI_CPUFREQ
+static unsigned int freq_to_min_sample_time(
+	struct cpufreq_interactive_tunables *tunables, unsigned int freq)
+{
+	int i;
+	unsigned int ret;
+	unsigned long flags;
+
+	spin_lock_irqsave(&tunables->min_sample_time_lock, flags);
+
+	for (i = 0; i < tunables->nmin_sample_time - 1 &&
+		    freq >= tunables->min_sample_time[i+1]; i += 2)
+		;
+
+	ret = tunables->min_sample_time[i];
+	spin_unlock_irqrestore(&tunables->min_sample_time_lock, flags);
+	return ret;
+}
+#endif
 
 /*
  * If increasing frequencies never map to a lower target load then
@@ -463,7 +494,11 @@ static void cpufreq_interactive_timer(unsigned long data)
 	max_fvtime = max(pcpu->pol_floor_val_time, pcpu->loc_floor_val_time);
 	if (new_freq < pcpu->floor_freq &&
 	    pcpu->target_freq >= pcpu->policy->cur) {
+#ifdef CONFIG_HISI_CPUFREQ
+		if (now - max_fvtime < freq_to_min_sample_time(tunables, pcpu->policy->cur)) {
+#else
 		if (now - max_fvtime < tunables->min_sample_time) {
+#endif
 			trace_cpufreq_interactive_notyet(
 				data, cpu_load, pcpu->target_freq,
 				pcpu->policy->cur, new_freq);
@@ -902,7 +937,6 @@ static ssize_t store_above_hispeed_delay(
 	tunables->nabove_hispeed_delay = ntokens;
 	spin_unlock_irqrestore(&tunables->above_hispeed_delay_lock, flags);
 	return count;
-
 }
 
 static ssize_t show_hispeed_freq(struct cpufreq_interactive_tunables *tunables,
@@ -943,6 +977,47 @@ static ssize_t store_go_hispeed_load(struct cpufreq_interactive_tunables
 	return count;
 }
 
+#ifdef CONFIG_HISI_CPUFREQ
+static ssize_t show_min_sample_time(
+	struct cpufreq_interactive_tunables *tunables, char *buf)
+{
+	int i;
+	ssize_t ret = 0;
+	unsigned long flags;
+
+	spin_lock_irqsave(&tunables->min_sample_time_lock, flags);
+
+	for (i = 0; i < tunables->nmin_sample_time; i++)
+		ret += scnprintf(buf + ret, PAGE_SIZE - ret, "%u%s",
+				 tunables->min_sample_time[i],
+				 i & 0x1 ? ":" : " ");
+
+	scnprintf(buf + ret - 1, PAGE_SIZE - ret + 1, "\n");
+	spin_unlock_irqrestore(&tunables->min_sample_time_lock, flags);
+	return ret;
+}
+
+static ssize_t store_min_sample_time(
+	struct cpufreq_interactive_tunables *tunables,
+	const char *buf, size_t count)
+{
+	int ntokens;
+	unsigned int *new_min_sample_time = NULL;
+	unsigned long flags;
+
+	new_min_sample_time = get_tokenized_data(buf, &ntokens);
+	if (IS_ERR(new_min_sample_time))
+		return PTR_RET(new_min_sample_time);
+
+	spin_lock_irqsave(&tunables->min_sample_time_lock, flags);
+	if (tunables->min_sample_time != default_min_sample_time)
+		kfree(tunables->min_sample_time);
+	tunables->min_sample_time = new_min_sample_time;
+	tunables->nmin_sample_time = ntokens;
+	spin_unlock_irqrestore(&tunables->min_sample_time_lock, flags);
+	return count;
+}
+#else
 static ssize_t show_min_sample_time(struct cpufreq_interactive_tunables
 		*tunables, char *buf)
 {
@@ -961,6 +1036,7 @@ static ssize_t store_min_sample_time(struct cpufreq_interactive_tunables
 	tunables->min_sample_time = val;
 	return count;
 }
+#endif /* CONFIG_HISI_CPUFREQ */
 
 static ssize_t show_timer_rate(struct cpufreq_interactive_tunables *tunables,
 		char *buf)
@@ -1519,11 +1595,8 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 	else
 		tunables = common_tunables;
 
-	WARN_ON(!tunables && (event != CPUFREQ_GOV_POLICY_INIT));
-#ifdef CONFIG_HISI_CPUFREQ
-	if (!tunables && (event != CPUFREQ_GOV_POLICY_INIT))
-		return 0;
-#endif
+	if (WARN_ON(!tunables && (event != CPUFREQ_GOV_POLICY_INIT)))
+		return -EINVAL;
 
 	switch (event) {
 	case CPUFREQ_GOV_POLICY_INIT:
@@ -1548,7 +1621,12 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 		tunables->go_hispeed_load = DEFAULT_GO_HISPEED_LOAD;
 		tunables->target_loads = default_target_loads;
 		tunables->ntarget_loads = ARRAY_SIZE(default_target_loads);
+#ifdef CONFIG_HISI_CPUFREQ
+		tunables->min_sample_time = default_min_sample_time;
+		tunables->nmin_sample_time = ARRAY_SIZE(default_min_sample_time);
+#else
 		tunables->min_sample_time = DEFAULT_MIN_SAMPLE_TIME;
+#endif
 		tunables->timer_rate = DEFAULT_TIMER_RATE;
 		tunables->boostpulse_duration_val = DEFAULT_MIN_SAMPLE_TIME;
 		tunables->timer_slack_val = DEFAULT_TIMER_SLACK;
@@ -1563,6 +1641,9 @@ static int cpufreq_governor_interactive(struct cpufreq_policy *policy,
 
 		spin_lock_init(&tunables->target_loads_lock);
 		spin_lock_init(&tunables->above_hispeed_delay_lock);
+#ifdef CONFIG_HISI_CPUFREQ
+		spin_lock_init(&tunables->min_sample_time_lock);
+#endif
 
 		policy->governor_data = tunables;
 		if (!have_governor_per_policy()) {
@@ -1735,6 +1816,7 @@ static int __init cpufreq_interactive_init(void)
 	unsigned int i;
 	struct cpufreq_interactive_cpuinfo *pcpu;
 	struct sched_param param = { .sched_priority = MAX_RT_PRIO-1 };
+	int ret = 0;
 
 	/* Initalize per-cpu timers */
 	for_each_possible_cpu(i) {
@@ -1763,7 +1845,12 @@ static int __init cpufreq_interactive_init(void)
 	/* NB: wake up so the thread does not look hung to the freezer */
 	wake_up_process(speedchange_task);
 
-	return cpufreq_register_governor(&cpufreq_gov_interactive);
+	ret = cpufreq_register_governor(&cpufreq_gov_interactive);
+	if (ret) {
+		kthread_stop(speedchange_task);
+		put_task_struct(speedchange_task);
+	}
+	return ret;
 }
 
 #ifdef CONFIG_CPU_FREQ_DEFAULT_GOV_INTERACTIVE
