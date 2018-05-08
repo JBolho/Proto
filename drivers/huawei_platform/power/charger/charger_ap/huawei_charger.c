@@ -69,6 +69,9 @@
 
 extern struct ycable_info *ycable;
 #endif
+#ifdef CONFIG_FORCE_FAST_CHARGE
+#include <linux/fastchg.h>
+#endif
 
 /*adaptor test result*/
 struct adaptor_test_attr adptor_test_tbl[] = {
@@ -1430,6 +1433,13 @@ static void charge_select_charging_current(struct charge_device_info *di)
 	case CHARGER_TYPE_USB:
 		di->input_current = di->core_data->iin_usb;
 		di->charge_current = di->core_data->ichg_usb;
+#ifdef CONFIG_FORCE_FAST_CHARGE
+		if (force_fast_charge > 0)
+		{
+			di->input_current = CHARGE_CURRENT_0800_MA;
+			di->charge_current = CHARGE_CURRENT_0800_MA;
+		}
+#endif
 		break;
 	case CHARGER_TYPE_NON_STANDARD:
 		di->input_current = di->core_data->iin_nonstd;
