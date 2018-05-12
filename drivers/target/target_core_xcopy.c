@@ -252,9 +252,11 @@ static int target_xcopy_parse_target_descriptors(struct se_cmd *se_cmd,
 	 * 0x0d/0x02 - COPY_TARGET_DEVICE_NOT_REACHABLE to request the
 	 * initiator to fall back to normal copy method.
 	 */
-	if (rc < 0)
+
+	if (rc < 0) {
 		*sense_ret = TCM_COPY_TARGET_DEVICE_NOT_REACHABLE;
 		goto out;
+	}
 
 	pr_debug("XCOPY TGT desc: Source dev: %p NAA IEEE WWN: 0x%16phN\n",
 		 xop->src_dev, &xop->src_tid_wwn[0]);
@@ -828,15 +830,15 @@ static void target_xcopy_do_work(struct work_struct *work)
 out:
 	xcopy_pt_undepend_remotedev(xop);
 	kfree(xop);
-
 	/*
 	 * Don't override an error scsi status if it has already been set
 	 */
 	if (ec_cmd->scsi_status == SAM_STAT_GOOD) {
-		pr_warn_ratelimited("target_xcopy_do_work: Setting X-COPY CHECK_CONDITION ->sending response\n",rc);
+		pr_warn_ratelimited("target_xcopy_do_work: rc: %d, Setting X-COPY" 
+				"CHECK_CONDITION -> sending response\n", rc);
 		ec_cmd->scsi_status = SAM_STAT_CHECK_CONDITION;
-	 }
-	target_complete_cmd(ec_cmd, SAM_STAT_CHECK_CONDITION);
+	}
+	target_complete_cmd(ec_cmd, ec_cmd->scsi_status);
 }
 
 sense_reason_t target_do_xcopy(struct se_cmd *se_cmd)
