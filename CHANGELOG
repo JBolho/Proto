@@ -1,1 +1,67 @@
-Version 0 - 12/04/18 - Initial Release, test build to check compatibility with B362 firmware.
+[Current Development State]
+
+- Upstream to 4.4.63
+- Update Wireguard to 0.0.20180524
+- Make Wireguard Built-In instead of Module
+
+Version 1.6R - 051918
+
+- Upstream to 4.4.52
+- Add FRandom RNG Driver
+- Add Dynamic SchedTune Boost
+- Update Westwood TCP Algorithm
+- Add Boeffla Wakelock Blocker
+- Fix for possible Entropy depletion
+- Update Wireguard to 0.0.20180519
+
+Version 1.5R - 051018
+
+- Add blu_active CPU Governor and CAF Boost driver for non-EAS users
+- Enable CPUFreq DDR Link
+- Enable HiSilicon Low Temp CPU Frequency Set
+- Timer Frequency set to 300HZ
+- Powersave, Userspace and Conservative CPU Govs no longer available
+- Automatic Process Group Scheduling Support
+- SMT Scheduler Support for Multi-Threading Optimization
+- Disable Scheduler Logging to reduce Overhead
+- GPU Scene Aware - Battery friendly balanced GPU management. OpenGL may suffer, Vulkan is favored.
+- Add Powersave GPU Gov for users that really don't need any GPU performance
+- Maple I/O Scheduler tuned and set to default
+- ZRam Disabled
+- Entropy Tuned for improved performance
+- Add FSync Toggle capability
+- Disable CRC checks
+- NTFS File System R/W Support
+- Enable CleanCache Driver
+- Skip Kernel Sync on Suspend
+- Disabled Huawei Root Scanner
+- Add Sociopath TCP Algorithm
+- Update Wireguard to version 0.0.20180420
+
+Version 1.2R - 050418
+
+- Add Maple and Tuned SIOPlus I/O Schedulers
+- Tuned CFQ and Deadline I/O Schedulers
+- Updated Sched Governor to Kirin970 .103 Source
+- Updated CPUFreq Drivers and Governors to Kirin970 .103 Source
+
+Version 1.1R - 042618
+
+- [FIX] Knuckle Gestures now work
+- Reverted Huawei Max Freq. Detection for Increased Granularity on "big" Cluster
+- Sched Governor now tuned for faster Freq Ramp-Down
+
+Version 1.0R - 041218
+
+- Linaro AArch64 GCC 4.9 2017.01 (ARMv8,A53 Optimized)
+- UnderVolt CPU/GPU by @nutcasev1.5
+- Activate built-in EAS and set "Sched" Governor as default
+- Enable Kirin Hotplug Flow for big.LITTLE
+- Enable Aggressive GPU Suspend on Low Frequencies
+- Deactivated Swap
+- Reduced Kernel Wakelocks by 50%
+- Set CFQ as Default I/O Scheduler
+- Renamed Interactive Gov to bypass EMUI Governor Overrides
+- Set Westwood as Default TCP Algorithm
+- Reactivated "setenforce" command
+- Added Wireguard VPN Capability
