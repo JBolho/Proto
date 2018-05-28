@@ -1,8 +1,15 @@
-[Current Development State]
+Version 1.7R - 052818
 
 - Upstream to 4.4.63
+- Implement USB Fast Charging Capability
+- Minor Efficiency Tweaks to Sched, SchedTune CPU Boost and LMK
+- Removed Sociopath TCP Algorithm (Not needed, performance similar to Westwood)
 - Update Wireguard to 0.0.20180524
 - Make Wireguard Built-In instead of Module
+
+----------------------------------------------------------------
+History re-organized at this point and Branch moved to Proto8
+----------------------------------------------------------------
 
 Version 1.6R - 051918
 
