@@ -776,6 +776,9 @@ const char * const vmstat_text[] = {
 	"nr_ioncache_pages",
 	"nr_mali_pages",
 	"nr_swapcache",
+#ifdef CONFIG_UKSM
+	"nr_uksm_zero_pages",
+#endif
 
 	/* enum writeback_stat_item counters */
 	"nr_dirty_threshold",
