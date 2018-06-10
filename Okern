@@ -1,0 +1,106 @@
+#!/bin/bash
+start=`date +%s`
+NOW=$(date +"%d-%m-%Y")
+echo "Current Date : $NOW"
+echo "Applying Build Settings"
+
+#CONFIGS
+export SLEEP=1
+if [[ -z "$1" ]]
+then
+	printf "Enter Version Number:/<>/:"
+	read v
+else
+	export v="$1"
+fi
+sleep $SLEEP
+echo "Setting Extra Version"
+export EV=EXTRAVERSION=_Proto_v$v
+echo "Setting Defconfig"
+export DEFCONFIG=proto_defconfig
+echo "Setting Image Location"
+export IMAGE=../out/arch/arm64/boot/Image.gz
+echo "To Enable Logging Support Export logs=1 or 101"
+echo "Set KBUILD_BUILD_VERSION to 0"
+export KBUILD_BUILD_VERSION="0"
+
+#Build
+echo "Checking for Previous Compiled Files"
+echo "Cleaning Out Compiled Files"
+if [[ "$(ls ../ | grep -c "out")" -gt "0" ]];
+then
+	rm -rf ../out
+	mkdir ../out
+fi
+sleep 1
+rm -f .config*
+if [ -f log_*.log ];
+then
+	echo "Build Logs Will Be Deleted"
+	sleep 3
+	rm -f log*.log
+else
+	printf "All Files Cleared\n"
+fi
+printf "#### Enviroment Setup Complete ####\n\n"
+sleep 2
+echo "#### Building ####"
+sleep $SLEEP
+echo "Compiling From $DEFCONFIG"
+make O=../out $DEFCONFIG $EV
+if [[ "$logs" > 0 ]];
+then
+	make O=../out $EV -j18 2>&1 | tee log_"$start".log
+else
+	make O=../out $EV -j18
+fi
+#
+end=`date +%s`
+#
+#Kernel Packing
+#
+if [ -f $IMAGE ];
+then
+	runtime=$((end-start))
+	printf "\n\nScript Made by eoghan2t7 of XDA\n"
+	echo "Version Number = "$v""
+	printf "\n\n#### Build Complete ####\n"
+	sleep 10
+	echo "#### Packing ####"
+	sleep 4
+	#
+	#make it a bit more beautiful :P
+	#
+	cd out/
+	echo "Removing Old Files"
+	rm -rf Image.gz *.zip
+	sleep $SLEEP
+	echo "Copying Image.gz"
+	cp ../../out/arch/arm64/boot/Image.gz Image.gz
+	echo "Compiling Proto8_v"$v".zip"
+	find . -type f -exec zip Proto8_v"$v".zip {} +
+	cd ..
+	rm out/Image.gz
+	printf "Zip Created & Shipped\n"
+	mv out/Proto8_v"$v".zip ../
+	sleep 2
+	clear
+	echo "Completion Time :"
+	echo "$runtime Seconds"
+	unset SLEEP
+	unset logs
+	unset v
+	printf "\n\n#### Done ####\n"
+	exit 0
+else
+   echo "Image Does Not Exist; Please Check For Compile Errors"
+   printf "\n\n#### Build Failed ####\n"
+   sleep $SLEEP
+	if [[ "$logs" == 1 ]];
+	then
+		unset logs
+		exit 0
+	else
+		exit 0
+	fi
+fi
