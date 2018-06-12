@@ -6,7 +6,7 @@
  */
 
 energy-costs {
-	CPU_COST_A72: core-cost1 { /* 2.36GHz */
+	CPU_COST_A72: core-cost1 { /* 2.61GHz */
 		busy-cost-data = <
 			373   191
 			591   370
