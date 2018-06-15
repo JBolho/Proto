@@ -25,9 +25,11 @@ ui_print " /_/   /_/ |_|\____/ /_/  \____/    ";
 ui_print "                                    ";
 ui_print "     by JBolho and nutcasev1.5      ";
 ui_print "                                    ";
-ui_print "     beta testing --- Hugoclaw      ";
+ui_print "           Beta Testing:            ";
+ui_print "      Hugoclaw and Mondor1979       ";
 ui_print "                                    ";
 ui_print "     Honor 9 and P10 certified      ";
+ui_print "                                    ";
 
 # shell variables
 block=/dev/block/bootdevice/by-name/kernel;
