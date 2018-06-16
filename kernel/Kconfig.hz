@@ -23,16 +23,6 @@ choice
 	  with lots of processors that may show reduced performance if
 	  too many timer interrupts are occurring.
 
-	config HZ_150
-		bool "150 HZ"
-	help
-	  150 Hz is an experimental setting undergoing test on Proto Kernel
-
-	config HZ_200
-		bool "200 HZ"
-	help
-	  200 Hz is an experimental setting undergoing test on Proto Kernel
-
 	config HZ_250
 		bool "250 HZ"
 	help
@@ -60,8 +50,6 @@ endchoice
 config HZ
 	int
 	default 100 if HZ_100
-	default 150 if HZ_150
-	default 200 if HZ_200
 	default 250 if HZ_250
 	default 300 if HZ_300
 	default 1000 if HZ_1000
