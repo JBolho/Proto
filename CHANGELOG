@@ -3,13 +3,18 @@
 - Upstreamed to 4.4.73
 - New Optimal Timer Frequency - 156HZ Set as Default
 - Go Tickless - Enable Full Dynticks System
+- Power Efficient Workqueues can now be toggled
+- Revert CPU DDR Link Enabling and other HiSi CPU Functions
+- Keep Kirin Specific SMP Flow but move to ARM big.LITTLE CPUFreq Driver
+- Reduce Kernel Max Wakelocks down by 90% relative to Stock
 - Minor RAM and DevFreq Tweaks
 - GPU Scene_Aware Tuned for Power Efficiency
+- Minor Log Spam on CPU's Silenced
 - Reduce Timeout to Stop Processes and Enter Sleep
 - Optimized Sound Output Gains and Eliminate Rates below 16Khz
 - Implement UKSM 0.1.2.6
 - Upgrade SchedTune Boost to v3
-- Update Wireguard to 0.0.20180613
+- Update Wireguard to 0.0.20180620
 
 ----------------------------------------------------------------
 History re-organized at this point and Branch moved to Proto2.0
