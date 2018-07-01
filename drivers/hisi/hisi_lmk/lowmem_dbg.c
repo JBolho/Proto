@@ -103,7 +103,7 @@ static void lowmem_dump(struct work_struct *work)
 	mutex_lock(&lowmem_dump_mutex);
 	show_mem(SHOW_MEM_FILTER_NODES);
 	dump_tasks(verbose);
-	ksm_show_stats();
+//	ksm_show_stats();
 	hisi_ion_memory_info(verbose);
 	if (verbose)
 		page_tracker_wake_up();
