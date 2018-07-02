@@ -2705,6 +2705,33 @@ struct ieee80211_ampdu_params {
 };
 
 /**
+ * struct ieee80211_ampdu_params - AMPDU action parameters
+ *
+ * @action: the ampdu action, value from %ieee80211_ampdu_mlme_action.
+ * @sta: peer of this AMPDU session
+ * @tid: tid of the BA session
+ * @ssn: start sequence number of the session. TX/RX_STOP can pass 0. When
+ *	action is set to %IEEE80211_AMPDU_RX_START the driver passes back the
+ *	actual ssn value used to start the session and writes the value here.
+ * @buf_size: reorder buffer size  (number of subframes). Valid only when the
+ *	action is set to %IEEE80211_AMPDU_RX_START or
+ *	%IEEE80211_AMPDU_TX_OPERATIONAL
+ * @amsdu: indicates the peer's ability to receive A-MSDU within A-MPDU.
+ *	valid when the action is set to %IEEE80211_AMPDU_TX_OPERATIONAL
+ * @timeout: BA session timeout. Valid only when the action is set to
+ *	%IEEE80211_AMPDU_RX_START
+ */
+struct ieee80211_ampdu_params {
+	enum ieee80211_ampdu_mlme_action action;
+	struct ieee80211_sta *sta;
+	u16 tid;
+	u16 ssn;
+	u8 buf_size;
+	bool amsdu;
+	u16 timeout;
+};
+
+/**
  * enum ieee80211_frame_release_type - frame release reason
  * @IEEE80211_FRAME_RELEASE_PSPOLL: frame released for PS-Poll
  * @IEEE80211_FRAME_RELEASE_UAPSD: frame(s) released due to
