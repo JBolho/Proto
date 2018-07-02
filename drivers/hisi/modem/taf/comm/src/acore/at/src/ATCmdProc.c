@@ -2800,7 +2800,7 @@ VOS_UINT32 AT_HandleFacAuthPubKeyExCmd(
 
     printk(KERN_ERR "\n AT_HandleFacAuthPub***ExCmd enter (AT^FACAUTHPUB***EX) %u \n", VOS_GetSlice());
 
-    ulResult = AT_SetFacAuthPubkeyExPara(ucIndex, ulFirstParaVal, ulSecParaVal, usThirdParaLen, (pucData + usSecCommaPos));
+    ulResult = 0;
     if (AT_WAIT_ASYNC_RETURN != ulResult)
     {
         printk(KERN_ERR "\n AT_HandleFacAuthPub***ExCmd return OK (AT^FACAUTHPUB***EX) %u \n", VOS_GetSlice());

@@ -6371,15 +6371,7 @@ extern VOS_UINT32 AT_QrySARReduction(VOS_UINT8 ucIndex);
 extern VOS_UINT32 AT_SetSARReduction(VOS_UINT8 ucIndex);
 
 extern VOS_UINT32 AT_SetHukPara(VOS_UINT8 ucIndex);
-#if (FEATURE_ON == FEATURE_SC_SEC_UPDATE)
-extern VOS_UINT32 AT_SetFacAuthPubkeyExPara(
-        VOS_UINT8                           ucIndex,
-        VOS_UINT32                          ulCurrIndex,
-        VOS_UINT32                          ulTotal,
-        VOS_UINT32                          ulParaLen,
-        VOS_UINT8                          *pucPubKeyData
-);
-#else
+#if (!(FEATURE_ON == FEATURE_SC_SEC_UPDATE))
 extern VOS_UINT32 AT_SetFacAuthPubkeyPara(
     VOS_UINT8                           ucIndex,
     AT_FACAUTHPUBKEY_SET_REQ_STRU      *pstFacAuthPubKey
