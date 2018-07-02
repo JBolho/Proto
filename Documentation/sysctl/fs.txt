@@ -272,6 +272,13 @@ in a mount namespace.
 
 ==============================================================
 
+mount-max:
+
+This denotes the maximum number of mounts that may exist
+in a mount namespace.
+
+==============================================================
+
 
 2. /proc/sys/fs/binfmt_misc
 ----------------------------------------------------------
