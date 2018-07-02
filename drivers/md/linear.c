@@ -143,6 +143,19 @@ static struct linear_conf *linear_conf(struct mddev *mddev, int raid_disks)
 			conf->disks[i-1].end_sector +
 			conf->disks[i].rdev->sectors;
 
+	/*
+	 * conf->raid_disks is copy of mddev->raid_disks. The reason to
+	 * keep a copy of mddev->raid_disks in struct linear_conf is,
+	 * mddev->raid_disks may not be consistent with pointers number of
+	 * conf->disks[] when it is updated in linear_add() and used to
+	 * iterate old conf->disks[] earray in linear_congested().
+	 * Here conf->raid_disks is always consitent with number of
+	 * pointers in conf->disks[] array, and mddev->private is updated
+	 * with rcu_assign_pointer() in linear_addr(), such race can be
+	 * avoided.
+	 */
+	conf->raid_disks = raid_disks;
+
 	return conf;
 
 out:
@@ -195,15 +208,23 @@ static int linear_add(struct mddev *mddev, struct md_rdev *rdev)
 	if (!newconf)
 		return -ENOMEM;
 
+	/* newconf->raid_disks already keeps a copy of * the increased
+	 * value of mddev->raid_disks, WARN_ONCE() is just used to make
+	 * sure of this. It is possible that oldconf is still referenced
+	 * in linear_congested(), therefore kfree_rcu() is used to free
+	 * oldconf until no one uses it anymore.
+	 */
 	mddev_suspend(mddev);
-	oldconf = mddev->private;
+	oldconf = rcu_dereference(mddev->private);
 	mddev->raid_disks++;
-	mddev->private = newconf;
+	WARN_ONCE(mddev->raid_disks != newconf->raid_disks,
+		"copied raid_disks doesn't match mddev->raid_disks");
+	rcu_assign_pointer(mddev->private, newconf);
 	md_set_array_sectors(mddev, linear_size(mddev, 0, 0));
 	set_capacity(mddev->gendisk, mddev->array_sectors);
 	mddev_resume(mddev);
 	revalidate_disk(mddev->gendisk);
-	kfree(oldconf);
+	kfree_rcu(oldconf, rcu);
 	return 0;
 }
 
