@@ -98,7 +98,6 @@ struct exception_table_entry {
         unsigned int insn, fixup;
 };
 
-void __ret_efault(void);
 void __retl_efault(void);
 
 /* Uh, these should become the main single-value transfer routines..
@@ -177,20 +176,6 @@ int __put_user_bad(void);
 	} 								     \
 	data = (__force type) __gu_val;					     \
 	 __gu_ret;							     \
-})
-
-#define __get_user_nocheck_ret(data, addr, size, type, retval) ({	\
-	register unsigned long __gu_val __asm__ ("l1");			\
-	switch (size) {							\
-	case 1: __get_user_asm_ret(__gu_val, ub, addr, retval); break;	\
-	case 2: __get_user_asm_ret(__gu_val, uh, addr, retval); break;	\
-	case 4: __get_user_asm_ret(__gu_val, uw, addr, retval); break;	\
-	case 8: __get_user_asm_ret(__gu_val, x, addr, retval); break;	\
-	default:							\
-		if (__get_user_bad())					\
-			return retval;					\
-	}								\
-	data = (__force type) __gu_val;					\
 })
 
 #define __get_user_asm(x, size, addr, ret)				\
