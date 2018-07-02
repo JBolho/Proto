@@ -986,6 +986,14 @@ static int cmp_map(const void *m0, const void *m1)
 	return 0;
 }
 
+static int cmp_map(const void *m0, const void *m1)
+{
+	const struct nfit_set_info_map *map0 = m0;
+	const struct nfit_set_info_map *map1 = m1;
+
+	return map0->region_offset - map1->region_offset;
+}
+
 /* Retrieve the nth entry referencing this spa */
 static struct acpi_nfit_memory_map *memdev_from_spa(
 		struct acpi_nfit_desc *acpi_desc, u16 range_index, int n)
