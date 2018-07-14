@@ -9,7 +9,7 @@
 #include <linux/lockdep.h>
 #include <linux/kasan-checks.h>
 #include <asm/alternative.h>
-#include <asm/cpufeature.h>
+#include <asm/cpufeatures.h>
 #include <asm/page.h>
 
 /*
