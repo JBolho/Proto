@@ -4,7 +4,7 @@
 ## AnyKernel setup
 # begin properties
 properties() { '
-kernel.string=Labyrinth by Dil3mm4 NeonDragon1909 @ xda-developers
+kernel.string=Labyrinth by Dil3mm4 and NeonDragon1909 @ xda-developers
 do.devicecheck=0
 do.modules=0
 do.cleanup=1
