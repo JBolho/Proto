@@ -31,6 +31,7 @@ obj-y                                           += tzdriver/
 obj-$(CONFIG_LOAD_IMAGE) += load_image/
 obj-$(CONFIG_HISI_SR)                      += pm/
 obj-$(CONFIG_HISI_OCBC)                    += ocbc/
+obj-$(CONFIG_HISI_GPUFREQ)                 += gpufreq/
 ifneq ($(link_kernel),false)
 obj-$(CONFIG_HISI_BALONG_MODEM) += modem/
 endif
