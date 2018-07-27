@@ -499,6 +499,7 @@ struct ufs_qcom_dev_params {
 	u32 hs_rate;		/* rate A/B to work in HS */
 	u32 desired_working_mode;
 };
+MODULE_DEVICE_TABLE(of, ufs_qcom_of_match);
 
 static int ufs_qcom_get_pwr_dev_param(struct ufs_qcom_dev_params *qcom_param,
 				      struct ufs_pa_layer_attr *dev_max,
