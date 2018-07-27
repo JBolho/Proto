@@ -2005,6 +2005,7 @@ static struct cftype files[] = {
 	{
 		.name = "memory_pressure",
 		.read_u64 = cpuset_read_u64,
+		.private = FILE_MEMORY_PRESSURE,
 	},
 
 	{
