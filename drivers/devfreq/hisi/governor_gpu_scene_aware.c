@@ -21,11 +21,7 @@
 #include <linux/list.h>
 #include <governor.h>
 
-#ifdef CONFIG_HUAWEI_DUBAI
-#include <huawei_platform/power/dubai/dubai.h>
-#endif
-
-#define DEFAULT_GO_HISPEED_LOAD		95
+#define DEFAULT_GO_HISPEED_LOAD		90
 #define DEFAULT_HISPEED_FREQ		400000000
 #define DEFAULT_VSYNC_EQULALIZE		45
 #define DEFAULT_LOADING_WINDOW		10
@@ -36,7 +32,7 @@
 
 #define SURPORT_POLICY_NUM		20
 #define SURPORT_NTARGET_LOAD_MAX	40
-#define POLICY_BUF_MAX			1024
+#define POLICY_BUF_MAX			2048
 #define POLICY_ID_BUF_MAX		10
 
 
@@ -87,11 +83,6 @@ static int devfreq_gpu_scene_aware_func(struct devfreq *df,
 	unsigned int i;
 	unsigned int targetload, vsync_equalize, util;
 	unsigned long a;
-
-#ifdef CONFIG_HUAWEI_DUBAI
-	dubai_update_gpu_info(stat.current_frequency, stat.busy_time,
-		stat.total_time, df->profile->polling_ms);
-#endif
 
 	if (err)
 		return err;
