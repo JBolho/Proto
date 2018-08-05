@@ -1,9 +1,10 @@
 [Current Dev Status]
 
 - GPU - Reduce TLB Pressure and Prevent Memory Fragmentation
-- GPU - Enable PWRSOFT-765 Flag to fix DevFreq Cooling Issues
 - GPU - Port and Optimize HiSilicon GPUFreq Driver and FHSS GPU Feature
+- GPU - Re-Tune Scene Aware and Disable D.U.B.A.I. Analytics on GPU Govs
 - Optimize Kernel by including Sched Energy Costs into CPU DTSI file
+- Update Wireguard to 0.0.20180718 and compile as Module again (faster boot)
 
 Version 2.0R - 062918 [Major Milestone Update]
 
