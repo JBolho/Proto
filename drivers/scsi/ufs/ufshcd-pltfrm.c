@@ -36,10 +36,44 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/of.h>
+#include <linux/blkdev.h>
+#include <linux/blk-mq.h>
+#include <linux/bootdevice.h>
 
 #include "ufshcd.h"
-#include "ufshcd-pltfrm.h"
 
+extern const struct ufs_hba_variant_ops ufs_hba_kirin_vops;
+#ifdef CONFIG_SCSI_UFS_KIRIN_V21
+extern const struct ufs_hba_variant_ops ufs_hba_kirin_v21_vops;
+#endif
+
+static const struct of_device_id ufs_of_match[] = {
+    {.compatible = "jedec,ufs-1.1"},
+    {
+	.compatible = "hisilicon,kirin-ufs", .data = &ufs_hba_kirin_vops,
+    },
+#ifdef CONFIG_SCSI_UFS_KIRIN_V21
+    {
+	.compatible = "hisilicon,kirin-ufs-v21", .data = &ufs_hba_kirin_v21_vops,
+    },
+#endif
+    {}, /*lint !e785*/
+
+};
+
+static struct ufs_hba_variant_ops *get_variant_ops(struct device *dev)
+{
+	if (dev->of_node) {
+		const struct of_device_id *match;
+
+		match = of_match_node(ufs_of_match, dev->of_node);
+		if (match)
+			return (struct ufs_hba_variant_ops *)match->data;
+	}
+
+	return NULL;
+}
+#if 0
 static int ufshcd_parse_clock_info(struct ufs_hba *hba)
 {
 	int ret = 0;
@@ -223,7 +257,7 @@ static int ufshcd_parse_regulator_info(struct ufs_hba *hba)
 out:
 	return err;
 }
-
+#endif
 #ifdef CONFIG_PM
 /**
  * ufshcd_pltfrm_suspend - suspend power management function
@@ -232,11 +266,14 @@ out:
  * Returns 0 if successful
  * Returns non-zero otherwise
  */
-int ufshcd_pltfrm_suspend(struct device *dev)
+static int ufshcd_pltfrm_suspend(struct device *dev)
 {
-	return ufshcd_system_suspend(dev_get_drvdata(dev));
+	int ret;
+	dev_info(dev, "%s:%d ++\n", __func__, __LINE__);
+	ret = ufshcd_system_suspend(dev_get_drvdata(dev));
+	dev_info(dev, "%s:%d ret:%d--\n", __func__, __LINE__, ret);
+	return ret;
 }
-EXPORT_SYMBOL_GPL(ufshcd_pltfrm_suspend);
 
 /**
  * ufshcd_pltfrm_resume - resume power management function
@@ -245,53 +282,85 @@ EXPORT_SYMBOL_GPL(ufshcd_pltfrm_suspend);
  * Returns 0 if successful
  * Returns non-zero otherwise
  */
-int ufshcd_pltfrm_resume(struct device *dev)
+static int ufshcd_pltfrm_resume(struct device *dev)
 {
-	return ufshcd_system_resume(dev_get_drvdata(dev));
+	int ret;
+	dev_info(dev, "%s:%d ++\n", __func__, __LINE__);
+	ret = ufshcd_system_resume(dev_get_drvdata(dev));
+	dev_info(dev, "%s:%d ret:%d--\n", __func__, __LINE__, ret);
+	return ret;
 }
-EXPORT_SYMBOL_GPL(ufshcd_pltfrm_resume);
-
-int ufshcd_pltfrm_runtime_suspend(struct device *dev)
+static int ufshcd_pltfrm_runtime_suspend(struct device *dev)
 {
-	return ufshcd_runtime_suspend(dev_get_drvdata(dev));
+	int ret;
+	ret = ufshcd_runtime_suspend((struct ufs_hba *)dev_get_drvdata(dev));
+	return ret;
 }
-EXPORT_SYMBOL_GPL(ufshcd_pltfrm_runtime_suspend);
-
-int ufshcd_pltfrm_runtime_resume(struct device *dev)
+static int ufshcd_pltfrm_runtime_resume(struct device *dev)
 {
-	return ufshcd_runtime_resume(dev_get_drvdata(dev));
+	int ret;
+	ret = ufshcd_runtime_resume((struct ufs_hba *)dev_get_drvdata(dev));
+	return ret;
 }
-EXPORT_SYMBOL_GPL(ufshcd_pltfrm_runtime_resume);
-
-int ufshcd_pltfrm_runtime_idle(struct device *dev)
+static int ufshcd_pltfrm_runtime_idle(struct device *dev)
 {
-	return ufshcd_runtime_idle(dev_get_drvdata(dev));
+	return ufshcd_runtime_idle((struct ufs_hba *)dev_get_drvdata(dev));
 }
-EXPORT_SYMBOL_GPL(ufshcd_pltfrm_runtime_idle);
-
+#else /* !CONFIG_PM */
+#define ufshcd_pltfrm_suspend	NULL
+#define ufshcd_pltfrm_resume	NULL
+#define ufshcd_pltfrm_runtime_suspend	NULL
+#define ufshcd_pltfrm_runtime_resume	NULL
+#define ufshcd_pltfrm_runtime_idle	NULL
 #endif /* CONFIG_PM */
 
-void ufshcd_pltfrm_shutdown(struct platform_device *pdev)
+#define SHUTDOWN_TIMEOUT (32 * 1000)
+static void ufshcd_pltfrm_shutdown(struct platform_device *pdev)
 {
-	ufshcd_shutdown((struct ufs_hba *)platform_get_drvdata(pdev));
+	struct ufs_hba *hba = (struct ufs_hba *)platform_get_drvdata(pdev);
+	unsigned long timeout = SHUTDOWN_TIMEOUT;
+
+
+
+	dev_err(&pdev->dev, "%s ++\n", __func__);
+	blk_mq_shutdown_freeze_tagset(&hba->host->tag_set);
+	/*set all scsi device state to quiet to forbid io form blk level*/
+	__set_quiesce_for_each_device(hba->host);
+
+	while (hba->lrb_in_use) {
+			if (timeout == 0) {
+				dev_err(&pdev->dev, "%s: wait cmdq complete reqs timeout!\n",
+					__func__);
+			}
+			timeout--;
+			mdelay(1);
+	}
+
+	ufshcd_shutdown(hba);
+	dev_err(&pdev->dev, "%s --\n", __func__);
 }
-EXPORT_SYMBOL_GPL(ufshcd_pltfrm_shutdown);
 
 /**
- * ufshcd_pltfrm_init - probe routine of the driver
+ * ufshcd_pltfrm_probe - probe routine of the driver
  * @pdev: pointer to Platform device handle
- * @vops: pointer to variant ops
  *
  * Returns 0 on success, non-zero value on failure
  */
-int ufshcd_pltfrm_init(struct platform_device *pdev,
-		       struct ufs_hba_variant_ops *vops)
+static int ufshcd_pltfrm_probe(struct platform_device *pdev)
 {
 	struct ufs_hba *hba;
 	void __iomem *mmio_base;
 	struct resource *mem_res;
 	int irq, err;
 	struct device *dev = &pdev->dev;
+	struct device_node *np = dev->of_node;
+
+#ifdef CONFIG_SCSI_UFS_KIRIN_V21
+	if (get_bootdevice_type() != BOOT_DEVICE_UFS) {
+		dev_err(dev, "system is't booted from UFS on BOSTON FPGA board\n");
+		return -ENODEV;
+	}
+#endif
 
 	mem_res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	mmio_base = devm_ioremap_resource(dev, mem_res);
@@ -313,22 +382,30 @@ int ufshcd_pltfrm_init(struct platform_device *pdev,
 		goto out;
 	}
 
-	hba->vops = vops;
+	hba->vops = get_variant_ops(&pdev->dev);
 
+#if 0 // we now do not have a clock and regulator tree for FPGA
 	err = ufshcd_parse_clock_info(hba);
 	if (err) {
 		dev_err(&pdev->dev, "%s: clock parse failed %d\n",
 				__func__, err);
-		goto dealloc_host;
+		goto out;
 	}
 	err = ufshcd_parse_regulator_info(hba);
 	if (err) {
 		dev_err(&pdev->dev, "%s: regulator init failed %d\n",
 				__func__, err);
-		goto dealloc_host;
+		goto out;
 	}
+#endif
 
 	pm_runtime_set_active(&pdev->dev);
+	pm_runtime_irq_safe(&pdev->dev);
+	pm_suspend_ignore_children(&pdev->dev, true);
+	pm_runtime_set_autosuspend_delay(&pdev->dev, 5);
+	pm_runtime_use_autosuspend(&pdev->dev);
+	if (of_find_property(np, "ufs-kirin-disable-pm-runtime", NULL))
+		pm_runtime_forbid(hba->dev);
 	pm_runtime_enable(&pdev->dev);
 
 	err = ufshcd_init(hba, mmio_base, irq);
@@ -337,6 +414,15 @@ int ufshcd_pltfrm_init(struct platform_device *pdev,
 		goto out_disable_rpm;
 	}
 
+#ifdef CONFIG_SCSI_UFS_INLINE_CRYPTO
+	/* to improve writing key efficiency, remap key regs with writecombine */
+	err = ufshcd_keyregs_remap_wc(hba, mem_res->start);
+	if (err) {
+		dev_err(dev, "ufshcd_keyregs_remap_wc err\n");
+		goto out_disable_rpm;
+	}
+
+#endif
 	platform_set_drvdata(pdev, hba);
 
 	return 0;
@@ -344,12 +430,45 @@ int ufshcd_pltfrm_init(struct platform_device *pdev,
 out_disable_rpm:
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);
-dealloc_host:
-	ufshcd_dealloc_host(hba);
 out:
 	return err;
 }
-EXPORT_SYMBOL_GPL(ufshcd_pltfrm_init);
+
+/**
+ * ufshcd_pltfrm_remove - remove platform driver routine
+ * @pdev: pointer to platform device handle
+ *
+ * Returns 0 on success, non-zero value on failure
+ */
+static int ufshcd_pltfrm_remove(struct platform_device *pdev)
+{
+	struct ufs_hba *hba =  (struct ufs_hba *)platform_get_drvdata(pdev);
+
+	pm_runtime_get_sync(&(pdev)->dev);
+	ufshcd_remove(hba);
+	return 0;
+}
+
+static const struct dev_pm_ops ufshcd_dev_pm_ops = {
+	.suspend	= ufshcd_pltfrm_suspend,
+	.resume		= ufshcd_pltfrm_resume,
+	.runtime_suspend = ufshcd_pltfrm_runtime_suspend,
+	.runtime_resume  = ufshcd_pltfrm_runtime_resume,
+	.runtime_idle    = ufshcd_pltfrm_runtime_idle,
+};
+
+static struct platform_driver ufshcd_pltfrm_driver = {
+	.probe	= ufshcd_pltfrm_probe,
+	.remove	= ufshcd_pltfrm_remove,
+	.shutdown = ufshcd_pltfrm_shutdown,
+	.driver	= {
+		.name	= "ufshcd",
+		.pm	= &ufshcd_dev_pm_ops,
+		.of_match_table = ufs_of_match,
+	},
+};
+
+module_platform_driver(ufshcd_pltfrm_driver);
 
 MODULE_AUTHOR("Santosh Yaragnavi <santosh.sy@samsung.com>");
 MODULE_AUTHOR("Vinayak Holikatti <h.vinayak@samsung.com>");

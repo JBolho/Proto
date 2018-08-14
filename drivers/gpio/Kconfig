@@ -332,6 +332,23 @@ config GPIO_PL061
 	help
 	  Say yes here to support the PrimeCell PL061 GPIO device
 
+config GPIO_HI6402
+	bool "Hi6402 GPIO support"
+	depends on HI6402_CODEC
+	help
+	  Say yes here to support the Hi6402 GPIO device
+
+config HISI_TUI_PL061
+	bool "TUI PL061 GPIO support"
+	help
+	  Say yes here to support the TUI for PL061 GPIO
+
+config GPIO_PM_SUPPORT
+	bool "GPIO PM SUPPORT"
+	default n
+	help
+	  Say yes here to support PM
+
 config GPIO_PXA
 	bool "PXA GPIO support"
 	depends on ARCH_PXA || ARCH_MMP
@@ -659,6 +676,13 @@ config GPIO_PCA953X_IRQ
 	help
 	  Say yes here to enable the pca953x to be used as an interrupt
 	  controller. It requires the driver to be built in the kernel.
+
+config GPIO_PCA953X_HISI
+	bool "Some features are supported on HISI chip"
+	depends on GPIO_PCA953X=y
+	help
+	  Some features are supported on HISI chip, such as "linux, gpio-base"
+	  and so on.
 
 config GPIO_PCF857X
 	tristate "PCF857x, PCA{85,96}7x, and MAX732[89] I2C GPIO expanders"

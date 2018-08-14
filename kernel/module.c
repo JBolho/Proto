@@ -62,13 +62,19 @@
 #include <uapi/linux/module.h>
 #include "module-internal.h"
 
+#include <linux/arm-smccc.h>
+#include <linux/of.h>
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/module.h>
 
 #ifndef ARCH_SHF_SMALL
 #define ARCH_SHF_SMALL 0
 #endif
-
+#ifdef CONFIG_HISI_HHEE
+#include <linux/hisi/hisi_hhee.h>
+static unsigned long clarify_token;
+#endif
 /*
  * Modules' sections will be aligned on page boundaries
  * to ensure complete separation of code and data, but
@@ -100,7 +106,12 @@
  * (delete and add uses RCU list operations). */
 DEFINE_MUTEX(module_mutex);
 EXPORT_SYMBOL_GPL(module_mutex);
+#ifdef CONFIG_KERNELDUMP_KO_DBG
+LIST_HEAD(modules);
+EXPORT_SYMBOL_GPL(modules);
+#else
 static LIST_HEAD(modules);
+#endif
 
 #ifdef CONFIG_MODULES_TREE_LOOKUP
 
@@ -1894,6 +1905,9 @@ static void set_section_ro_nx(void *base,
 	/* begin and end PFNs of the current subsection */
 	unsigned long begin_pfn;
 	unsigned long end_pfn;
+#ifdef CONFIG_HISI_HHEE
+	struct arm_smccc_res res;
+#endif
 
 	/*
 	 * Set RO for module text and RO-data:
@@ -1914,6 +1928,12 @@ static void set_section_ro_nx(void *base,
 		if (end_pfn > begin_pfn)
 			set_memory_nx(begin_pfn << PAGE_SHIFT, end_pfn - begin_pfn);
 	}
+#ifdef CONFIG_HISI_HHEE
+	if(HHEE_ENABLE == hhee_check_enable())
+		arm_smccc_hvc( HHEE_LKM_UPDATE, (unsigned long)base, text_size,
+			clarify_token, 0, 0, 0, 0, &res);
+#endif
+
 }
 
 static void unset_module_core_ro_nx(struct module *mod)
@@ -3989,6 +4009,21 @@ static int __init proc_modules_init(void)
 	return 0;
 }
 module_init(proc_modules_init);
+#endif
+
+#ifdef CONFIG_HISI_HHEE
+static int __init module_token_init(void)
+{
+
+	struct arm_smccc_res res;
+	if(HHEE_ENABLE == hhee_check_enable()){
+		arm_smccc_hvc(HHEE_HVC_TOKEN, 0, 0,
+			0, 0, 0, 0, 0, &res);
+		clarify_token = res.a1;
+	}
+	return 0;
+}
+module_init(module_token_init);
 #endif
 
 /* Given an address, look for it in the module exception tables. */

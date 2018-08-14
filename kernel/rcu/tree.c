@@ -56,7 +56,7 @@
 #include <linux/random.h>
 #include <linux/trace_events.h>
 #include <linux/suspend.h>
-
+#include <linux/hisi/mntn_record_sp.h>
 #include "tree.h"
 #include "rcu.h"
 
@@ -1217,8 +1217,10 @@ static void rcu_dump_cpu_stacks(struct rcu_state *rsp)
 		raw_spin_lock_irqsave(&rnp->lock, flags);
 		if (rnp->qsmask != 0) {
 			for (cpu = 0; cpu <= rnp->grphi - rnp->grplo; cpu++)
-				if (rnp->qsmask & (1UL << cpu))
+				if (rnp->qsmask & (1UL << cpu)){
 					dump_cpu_task(rnp->grplo + cpu);
+					mntn_show_stack_othercpus(rnp->grplo + cpu);
+				}
 		}
 		raw_spin_unlock_irqrestore(&rnp->lock, flags);
 	}

@@ -38,6 +38,9 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/oom.h>
+#ifdef  CONFIG_LOG_JANK
+#include <huawei_platform/log/log_jank.h>
+#endif
 
 int sysctl_panic_on_oom;
 int sysctl_oom_kill_allocating_task;
@@ -585,6 +588,11 @@ void oom_kill_process(struct oom_control *oc, struct task_struct *p,
 	 */
 	do_send_sig_info(SIGKILL, SEND_SIG_FORCED, victim, true);
 	mark_oom_victim(victim);
+#ifdef  CONFIG_LOG_JANK
+	LOG_JANK_D(JLID_KERNEL_OOM,"#ARG1:<%s>#ARG2:<%d>",
+		victim->comm,
+		task_pid_nr(victim));
+#endif
 	pr_err("Killed process %d (%s) total-vm:%lukB, anon-rss:%lukB, file-rss:%lukB\n",
 		task_pid_nr(victim), victim->comm, K(victim->mm->total_vm),
 		K(get_mm_counter(victim->mm, MM_ANONPAGES)),

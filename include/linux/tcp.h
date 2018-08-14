@@ -19,10 +19,16 @@
 
 
 #include <linux/skbuff.h>
+#ifdef CONFIG_TCP_CONG_BBR
+#include <linux/win_minmax.h>
+#endif
 #include <net/sock.h>
 #include <net/inet_connection_sock.h>
 #include <net/inet_timewait_sock.h>
 #include <uapi/linux/tcp.h>
+#ifdef CONFIG_TCP_ARGO
+#include <huawei_platform/emcom/argo/tcp_argo.h>
+#endif /* CONFIG_TCP_ARGO */
 
 static inline struct tcphdr *tcp_hdr(const struct sk_buff *skb)
 {
@@ -201,7 +207,12 @@ struct tcp_sock {
 		u8 reord;    /* reordering detected */
 	} rack;
 	u16	advmss;		/* Advertised MSS			*/
+#ifdef CONFIG_TCP_CONG_BBR
+	u8	rate_app_limited:1,  /* rate_{delivered,interval_us} limited? */
+		unused:7;
+#else
 	u8	unused;
+#endif
 	u8	nonagle     : 4,/* Disable Nagle algorithm?             */
 		thin_lto    : 1,/* Use linear timeouts for thin streams */
 		thin_dupack : 1,/* Fast retransmit on first dupack      */
@@ -223,10 +234,14 @@ struct tcp_sock {
 	u32	mdev_max_us;	/* maximal mdev for the last rtt period	*/
 	u32	rttvar_us;	/* smoothed mdev_max			*/
 	u32	rtt_seq;	/* sequence number to update rttvar	*/
-	struct rtt_meas {
-		u32 rtt, ts;	/* RTT in usec and sampling time in jiffies. */
-	} rtt_min[3];
+#ifdef CONFIG_TCP_CONG_BBR
+	struct  minmax rtt_min;
 
+#else
+	struct rtt_meas {
+		u32 rtt, ts;    /* RTT in usec and sampling time in jiffies. */
+	} rtt_min[3];
+#endif
 	u32	packets_out;	/* Packets which are "in flight"	*/
 	u32	retrans_out;	/* Retransmitted packets out		*/
 	u32	max_packets_out;  /* max packets_out in last window */
@@ -256,6 +271,15 @@ struct tcp_sock {
 	u32	prr_delivered;	/* Number of newly delivered packets to
 				 * receiver in Recovery. */
 	u32	prr_out;	/* Total number of pkts sent during Recovery. */
+#ifdef CONFIG_TCP_CONG_BBR
+	u32	delivered;	/* Total data packets delivered incl. rexmits */
+	u32	lost;		/* Total data packets lost incl. rexmits */
+	u32	app_limited;	/* limited until "delivered" reaches this val */
+	struct skb_mstamp first_tx_mstamp;  /* start of window send phase */
+	struct skb_mstamp delivered_mstamp; /* time we reached "delivered" */
+	u32	rate_delivered;    /* saved rate sample: packets delivered */
+	u32	rate_interval_us;  /* saved rate sample: time elapsed */
+#endif
 
  	u32	rcv_wnd;	/* Current receiver window		*/
 	u32	write_seq;	/* Tail(+1) of data held in tcp send buffer */
@@ -264,6 +288,10 @@ struct tcp_sock {
 	u32	lost_out;	/* Lost packets			*/
 	u32	sacked_out;	/* SACK'd packets			*/
 	u32	fackets_out;	/* FACK'd packets			*/
+
+#ifdef CONFIG_TCP_CONG_BBR
+	struct hrtimer	pacing_timer;
+#endif
 
 	/* from STCP, retrans queue hinting */
 	struct sk_buff* lost_skb_hint;
@@ -310,6 +338,9 @@ struct tcp_sock {
 		u32	rtt;
 		u32	seq;
 		u32	time;
+#ifdef CONFIG_TCP_AUTOTUNING
+		u32	min_rtt;
+#endif
 	} rcv_rtt_est;
 
 /* Receiver queue space */
@@ -317,7 +348,19 @@ struct tcp_sock {
 		int	space;
 		u32	seq;
 		u32	time;
+#ifdef CONFIG_TCP_AUTOTUNING
+		u32	segs;
+#endif
 	} rcvq_space;
+
+#ifdef CONFIG_TCP_AUTOTUNING
+	struct {
+		u32	loss;
+		u32	bw;
+		u32	rtt_cnt;
+		u32	rcv_wnd;
+	} rcv_rate;
+#endif
 
 /* TCP-specific MTU probe information. */
 	struct {
@@ -343,6 +386,16 @@ struct tcp_sock {
 	 */
 	struct request_sock *fastopen_rsk;
 	u32	*saved_syn;
+
+#ifdef CONFIG_TCP_ARGO
+/* TCP ARGO */
+	struct tcp_argo *argo;
+#endif /* CONFIG_TCP_ARGO */
+
+#ifdef CONFIG_CHR_NETLINK_MODULE
+	u8 first_data_flag;
+	u8 data_net_flag;
+#endif
 };
 
 enum tsq_flags {
@@ -354,6 +407,9 @@ enum tsq_flags {
 	TCP_MTU_REDUCED_DEFERRED,  /* tcp_v{4|6}_err() could not call
 				    * tcp_v{4|6}_mtu_reduced()
 				    */
+#ifdef CONFIG_HW_CROSSLAYER_OPT
+	TCP_CROSSLAYER_RECOVERY_DEFERRED, /* aspen_crosslayer_recovery() found socket was owned */
+#endif
 };
 
 static inline struct tcp_sock *tcp_sk(const struct sock *sk)

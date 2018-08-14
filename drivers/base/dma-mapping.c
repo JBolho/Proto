@@ -309,7 +309,7 @@ void *dma_common_contiguous_remap(struct page *page, size_t size,
 	void *ptr;
 	unsigned long pfn;
 
-	pages = kmalloc(sizeof(struct page *) << get_order(size), GFP_KERNEL);
+	pages = vmalloc(sizeof(struct page *) << get_order(size));
 	if (!pages)
 		return NULL;
 
@@ -318,7 +318,7 @@ void *dma_common_contiguous_remap(struct page *page, size_t size,
 
 	ptr = dma_common_pages_remap(pages, size, vm_flags, prot, caller);
 
-	kfree(pages);
+	vfree(pages);
 
 	return ptr;
 }
@@ -335,7 +335,7 @@ void dma_common_free_remap(void *cpu_addr, size_t size, unsigned long vm_flags)
 		return;
 	}
 
-	unmap_kernel_range((unsigned long)cpu_addr, size);
+	unmap_kernel_range((unsigned long)cpu_addr, PAGE_ALIGN(size));
 	vunmap(cpu_addr);
 }
 #endif

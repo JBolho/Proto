@@ -138,6 +138,13 @@ void static_key_slow_dec_deferred(struct static_key_deferred *key)
 }
 EXPORT_SYMBOL_GPL(static_key_slow_dec_deferred);
 
+void static_key_deferred_flush(struct static_key_deferred *key)
+{
+	STATIC_KEY_CHECK_USE();
+	flush_delayed_work(&key->work);
+}
+EXPORT_SYMBOL_GPL(static_key_deferred_flush);
+
 void jump_label_rate_limit(struct static_key_deferred *key,
 		unsigned long rl)
 {
@@ -456,6 +463,11 @@ struct notifier_block jump_label_module_nb = {
 	.notifier_call = jump_label_module_notify,
 	.priority = 1, /* higher than tracepoints */
 };
+
+int jump_label_register(struct module *mod)
+{
+	return jump_label_module_notify(&jump_label_module_nb, MODULE_STATE_COMING, mod);
+}
 
 static __init int jump_label_init_module(void)
 {

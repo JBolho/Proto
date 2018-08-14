@@ -172,6 +172,16 @@ config ARM_SP805_WATCHDOG
 	help
 	  ARM Primecell SP805 Watchdog timer. This will reboot your system when
 	  the timeout is reached.
+#
+# Hisilicon Watchdog
+#
+
+config HISI_SP805_WATCHDOG
+	tristate "HISILICON SP805 Watchdog"
+	depends on (ARM || ARM64) && ARM_AMBA
+	select WATCHDOG_CORE
+	help
+	  Hisilicon SP805 Watchdog Based on ARM SP805 Watchdog.
 
 config AT91RM9200_WATCHDOG
 	tristate "AT91RM9200 watchdog"

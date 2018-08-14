@@ -28,7 +28,7 @@
 	.text
 	.align 11
 
-ENTRY(__hyp_stub_vectors)
+ENTRY_NOTAG(__hyp_stub_vectors)
 	ventry	el2_sync_invalid		// Synchronous EL2t
 	ventry	el2_irq_invalid			// IRQ EL2t
 	ventry	el2_fiq_invalid			// FIQ EL2t
@@ -100,10 +100,10 @@ ENDPROC(\label)
  * initialisation entry point.
  */
 
-ENTRY(__hyp_get_vectors)
+ENTRY_NOTAG(__hyp_get_vectors)
 	mov	x0, xzr
 	// fall through
-ENTRY(__hyp_set_vectors)
+ENTRY_NOTAG(__hyp_set_vectors)
 	hvc	#0
 	ret
 ENDPROC(__hyp_get_vectors)

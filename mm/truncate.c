@@ -188,6 +188,11 @@ int invalidate_inode_page(struct page *page)
 		return 0;
 	if (page_mapped(page))
 		return 0;
+#ifdef CONFIG_TASK_PROTECT_LRU
+	if (PageProtect(page))
+		return 0;
+#endif
+
 	return invalidate_complete_page(mapping, page);
 }
 
@@ -732,7 +737,7 @@ EXPORT_SYMBOL(truncate_setsize);
  */
 void pagecache_isize_extended(struct inode *inode, loff_t from, loff_t to)
 {
-	int bsize = 1 << inode->i_blkbits;
+	int bsize = i_blocksize(inode);
 	loff_t rounded_from;
 	struct page *page;
 	pgoff_t index;

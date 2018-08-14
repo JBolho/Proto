@@ -30,7 +30,7 @@
 
 enum klp_state {
 	KLP_DISABLED,
-	KLP_ENABLED
+	KLP_ENABLED,
 };
 
 /**
@@ -47,6 +47,7 @@ struct klp_func {
 	/* external */
 	const char *old_name;
 	void *new_func;
+	unsigned long new_size;
 	/*
 	 * The old_addr field is optional and can be used to resolve
 	 * duplicate symbol names in the vmlinux object.  If this
@@ -56,11 +57,16 @@ struct klp_func {
 	 * way to resolve the ambiguity.
 	 */
 	unsigned long old_addr;
+	unsigned long old_size;
+	const char *ref_name;
+	long ref_offset;
+	int force;
 
 	/* internal */
 	struct kobject kobj;
 	enum klp_state state;
 	struct list_head stack_node;
+	struct list_head list_node;
 };
 
 /**
@@ -80,6 +86,12 @@ struct klp_reloc {
 	const char *name;
 	int addend;
 	int external;
+	const char *ref_name;
+	long ref_offset;
+};
+
+struct klp_hook {
+	void (*hook)(void);
 };
 
 /**
@@ -97,9 +109,11 @@ struct klp_object {
 	const char *name;
 	struct klp_reloc *relocs;
 	struct klp_func *funcs;
+	struct klp_hook *hooks_load;
+	struct klp_hook *hooks_unload;
 
 	/* internal */
-	struct kobject kobj;
+	struct kobject *kobj;
 	struct module *mod;
 	enum klp_state state;
 };
@@ -131,8 +145,8 @@ struct klp_patch {
 
 int klp_register_patch(struct klp_patch *);
 int klp_unregister_patch(struct klp_patch *);
-int klp_enable_patch(struct klp_patch *);
-int klp_disable_patch(struct klp_patch *);
+int enable_patch(struct klp_patch *);
+int disable_patch(struct klp_patch *);
 
 #endif /* CONFIG_LIVEPATCH */
 

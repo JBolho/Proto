@@ -27,6 +27,9 @@
 #include <linux/module.h>
 #include <linux/math64.h>
 #include <net/tcp.h>
+#ifdef CONFIG_HW_WIFIPRO
+#include <hwnet/ipv4/wifipro_tcp_monitor.h>
+#endif
 
 #define BICTCP_BETA_SCALE    1024	/* Scale factor beta calculation
 					 * max_cwnd = snd_cwnd * beta
@@ -384,6 +387,12 @@ static void bictcp_state(struct sock *sk, u8 new_state)
 		bictcp_reset(inet_csk_ca(sk));
 		bictcp_hystart_reset(sk);
 	}
+
+#ifdef CONFIG_HW_WIFIPRO
+	if (is_wifipro_on && new_state != TCP_CA_Open) {
+	    wifipro_handle_congestion(sk, new_state);
+	}
+#endif
 }
 
 static void hystart_update(struct sock *sk, u32 delay)
@@ -437,21 +446,33 @@ static void hystart_update(struct sock *sk, u32 delay)
 /* Track delayed acknowledgment ratio using sliding window
  * ratio = (15*ratio + sample) / 16
  */
+#ifdef CONFIG_TCP_CONG_BBR
+static void bictcp_acked(struct sock *sk, const struct ack_sample *sample)
+#else
 static void bictcp_acked(struct sock *sk, u32 cnt, s32 rtt_us)
+#endif
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
 	struct bictcp *ca = inet_csk_ca(sk);
 	u32 delay;
 
 	/* Some calls are for duplicates without timetamps */
+#ifdef CONFIG_TCP_CONG_BBR
+	if (sample->rtt_us < 0)
+#else
 	if (rtt_us < 0)
+#endif
 		return;
 
 	/* Discard delay samples right after fast recovery */
 	if (ca->epoch_start && (s32)(tcp_time_stamp - ca->epoch_start) < HZ)
 		return;
 
+#ifdef CONFIG_TCP_CONG_BBR
+	delay = (sample->rtt_us << 3) / USEC_PER_MSEC;
+#else
 	delay = (rtt_us << 3) / USEC_PER_MSEC;
+#endif
 	if (delay == 0)
 		delay = 1;
 
@@ -466,6 +487,9 @@ static void bictcp_acked(struct sock *sk, u32 cnt, s32 rtt_us)
 }
 
 static struct tcp_congestion_ops cubictcp __read_mostly = {
+#ifdef CONFIG_TCP_CONG_BBR
+	.flags		= TCP_CONG_NON_RESTRICTED,
+#endif
 	.init		= bictcp_init,
 	.ssthresh	= bictcp_recalc_ssthresh,
 	.cong_avoid	= bictcp_cong_avoid,

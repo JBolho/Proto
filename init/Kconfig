@@ -392,6 +392,16 @@ config IRQ_TIME_ACCOUNTING
 
 endchoice
 
+config SCHED_WALT
+        bool "Support window based load tracking"
+        depends on SMP
+        depends on FAIR_GROUP_SCHED
+        help
+        This feature will allow the scheduler to maintain a tunable window
+	based set of metrics for tasks and runqueues. These metrics can be
+	used to guide task placement as well as task frequency requirements
+	for cpufreq governors.
+
 config BSD_PROCESS_ACCT
 	bool "BSD Process Accounting"
 	depends on MULTIUSER
@@ -924,6 +934,20 @@ config NUMA_BALANCING_DEFAULT_ENABLED
 	  If set, automatic NUMA balancing will be enabled if running on a NUMA
 	  machine.
 
+config BOOST_KILL
+	bool "boost kill"
+	default n
+	help
+	  if set, the process to be killed will be move to fast cpu and its nice
+	  value will also set to -20.
+
+config HW_BOOST_SIGKILL_FREE
+	bool "boost memory release for sigkilled procs"
+	default n
+	help
+	  if set, the process to be killed will release its memory before all
+	  threads are dead.
+
 menuconfig CGROUPS
 	bool "Control Group support"
 	select KERNFS
@@ -956,6 +980,8 @@ config CGROUP_FREEZER
 	  Provides a way to freeze and unfreeze all tasks in a
 	  cgroup.
 
+source "kernel/cgroup_huawei/Kconfig"
+
 config CGROUP_PIDS
 	bool "PIDs cgroup subsystem"
 	help
@@ -971,6 +997,20 @@ config CGROUP_PIDS
 	  to a cgroup hierarchy will *not* be blocked by the PIDs subsystem),
 	  since the PIDs limit only affects a process's ability to fork, not to
 	  attach to a cgroup.
+
+config HW_CGROUP_IONICE
+	bool "ionice cgroup controller"
+	depends on BLOCK
+	help
+	  Provides a way to set ionice for tasks in a cgroup.
+	  It's useful in mobile devices where certain background apps
+	  are doing heavy io work.
+
+config CGROUP_IOLIMIT
+	bool "IO bandwidth limit cgroup subsystem"
+	help
+	  Provides a cgroup implementing for io bandwidth while a process
+	  in the cgroup read or write.
 
 config CGROUP_DEVICE
 	bool "Device controller for cgroups"
@@ -998,6 +1038,23 @@ config CGROUP_CPUACCT
 	help
 	  Provides a simple Resource Controller for monitoring the
 	  total CPU consumed by the tasks in a cgroup.
+
+config CGROUP_SCHEDTUNE
+	bool "CFS tasks boosting cgroup subsystem (EXPERIMENTAL)"
+	depends on SCHED_TUNE
+	help
+	  This option provides the "schedtune" controller which improves the
+	  flexibility of the task boosting mechanism by introducing the support
+	  to define "per task" boost values.
+
+	  This new controller:
+	  1. allows only a two layers hierarchy, where the root defines the
+	     system-wide boost value and its direct childrens define each one a
+	     different "class of tasks" to be boosted with a different value
+	  2. supports up to 16 different task classes, each one which could be
+	     configured with a different boost value
+
+	  Say N if unsure.
 
 config PAGE_COUNTER
        bool
@@ -1225,6 +1282,19 @@ config NET_NS
 
 endif # NAMESPACES
 
+config HISI_EAS_SCHED
+	bool "Hisilicon EAS scheduler optimizations"
+	default n
+	help
+	  Hisilicon EAS scheduler.
+
+config HISI_RT_OPT
+	bool "hisilicon rt-threads optimization"
+	depends on HISI_EAS_SCHED
+	default n
+	help
+	  Limit rt-threads to slow cpus for power saving.
+
 config SCHED_AUTOGROUP
 	bool "Automatic process group scheduling"
 	select CGROUPS
@@ -1236,6 +1306,43 @@ config SCHED_AUTOGROUP
 	  of workloads isolates aggressive CPU burners (like build jobs) from
 	  desktop applications.  Task group autogeneration is currently based
 	  upon task session.
+
+config SCHED_TUNE
+	bool "Boosting for CFS tasks (EXPERIMENTAL)"
+	depends on SMP
+	help
+	  This option enables the system-wide support for task boosting.
+	  When this support is enabled a new sysctl interface is exposed to
+	  userspace via:
+	     /proc/sys/kernel/sched_cfs_boost
+	  which allows to set a system-wide boost value in range [0..100].
+
+	  The currently boosting strategy is implemented in such a way that:
+	  - a 0% boost value requires to operate in "standard" mode by
+	    scheduling all tasks at the minimum capacities required by their
+	    workload demand
+	  - a 100% boost value requires to push at maximum the task
+	    performances, "regardless" of the incurred energy consumption
+
+	  A boost value in between these two boundaries is used to bias the
+	  power/performance trade-off, the higher the boost value the more the
+	  scheduler is biased toward performance boosting instead of energy
+	  efficiency.
+
+	  Since this support exposes a single system-wide knob, the specified
+	  boost value is applied to all (CFS) tasks in the system.
+
+	  If unsure, say N.
+
+config DEFAULT_USE_ENERGY_AWARE
+	bool "Default to enabling the Energy Aware Scheduler feature"
+	default n
+	help
+	  This option defaults the ENERGY_AWARE scheduling feature to true,
+	  as without SCHED_DEBUG set this feature can't be enabled or disabled
+	  via sysctl.
+
+	  Say N if unsure.
 
 config SYSFS_DEPRECATED
 	bool "Enable deprecated sysfs features to support old userspace tools"
@@ -1455,6 +1562,14 @@ config PRINTK
 	  and makes the kernel more or less silent. As this makes it
 	  very difficult to diagnose system problems, saying N here is
 	  strongly discouraged.
+
+config HUAWEI_PRINTK_CTRL
+	default n
+	bool "Enable support for log level control" if EXPERT
+	help
+	  This option enables log level control in no log load, Warning
+	  , Info, Debug kernel log will not be saved to memory if this
+	  option is enabled
 
 config BUG
 	bool "BUG() support" if EXPERT
@@ -1719,6 +1834,7 @@ choice
 
 config SLAB
 	bool "SLAB"
+	select HAVE_HARDENED_USERCOPY_ALLOCATOR
 	help
 	  The regular slab allocator that is established and known to work
 	  well in all environments. It organizes cache hot objects in
@@ -1726,6 +1842,7 @@ config SLAB
 
 config SLUB
 	bool "SLUB (Unqueued Allocator)"
+	select HAVE_HARDENED_USERCOPY_ALLOCATOR
 	help
 	   SLUB is a slab allocator that minimizes cache line usage
 	   instead of managing queues of cached objects (SLAB approach).
@@ -2054,3 +2171,6 @@ config ASN1
 	  functions to call on what tags.
 
 source "kernel/Kconfig.locks"
+source "kernel/hwcfs/Kconfig"
+source "net/network_aware/Kconfig"
+source "kernel/cpu_netlink/Kconfig"

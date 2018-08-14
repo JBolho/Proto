@@ -17,6 +17,7 @@ config ARM_CCI400_COMMON
 
 config ARM_CCI400_PMU
 	bool "ARM CCI400 PMU support"
+	default n
 	depends on (ARM && CPU_V7) || ARM64
 	depends on PERF_EVENTS
 	select ARM_CCI400_COMMON

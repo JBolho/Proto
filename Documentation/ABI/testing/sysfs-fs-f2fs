@@ -87,8 +87,61 @@ Contact:	"Jaegeuk Kim" <jaegeuk@kernel.org>
 Description:
 		 Controls the checkpoint timing.
 
+What:		/sys/fs/f2fs/<disk>/idle_interval
+Date:		January 2016
+Contact:	"Jaegeuk Kim" <jaegeuk@kernel.org>
+Description:
+		 Controls the idle timing.
+
 What:		/sys/fs/f2fs/<disk>/ra_nid_pages
 Date:		October 2015
 Contact:	"Chao Yu" <chao2.yu@samsung.com>
 Description:
 		 Controls the count of nid pages to be readaheaded.
+
+What:		/sys/fs/f2fs/<disk>/dirty_nats_ratio
+Date:		January 2016
+Contact:	"Chao Yu" <chao2.yu@samsung.com>
+Description:
+		 Controls dirty nat entries ratio threshold, if current
+		 ratio exceeds configured threshold, checkpoint will
+		 be triggered for flushing dirty nat entries.
+
+What:		/sys/fs/f2fs/<disk>/lifetime_write_kbytes
+Date:		January 2016
+Contact:	"Shuoran Liu" <liushuoran@huawei.com>
+Description:
+		 Shows total written kbytes issued to disk.
+
+What:		/sys/fs/f2fs/<disk>/reserved_blocks
+Date:		June 2017
+Contact:	"Chao Yu" <yuchao0@huawei.com>
+Description:
+		 Controls target reserved blocks in system, the threshold
+		 is soft, it could exceed current available user space.
+
+What:		/sys/fs/f2fs/<disk>/current_reserved_blocks
+Date:		October 2017
+Contact:	"Yunlong Song" <yunlong.song@huawei.com>
+Contact:	"Chao Yu" <yuchao0@huawei.com>
+Description:
+		 Shows current reserved blocks in system, it may be temporarily
+		 smaller than target_reserved_blocks, but will gradually
+		 increase to target_reserved_blocks when more free blocks are
+		 freed by user later.
+
+What:		/sys/fs/f2fs/<disk>/ovp_reserved_blocks
+Date:		December 2017
+Contact:	"Yunlong Song" <yunlong.song@huawei.com>
+Description:
+		 Controls target ovp reserved blocks in system, the threshold
+		 is soft, it could exceed current available user space.
+
+What:		/sys/fs/f2fs/<disk>/ovp_current_reserved_blocks
+Date:		December 2017
+Contact:	"Yunlong Song" <yunlong.song@huawei.com>
+Description:
+		 Shows current ovp reserved blocks in system, it may be temporarily
+		 smaller than target ovp_reserved_blocks, but will gradually
+		 increase to target ovp_reserved_blocks when more free blocks are
+		 freed by user later.

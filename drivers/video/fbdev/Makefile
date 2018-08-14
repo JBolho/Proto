@@ -149,6 +149,9 @@ obj-$(CONFIG_FB_DA8XX)		  += da8xx-fb.o
 obj-$(CONFIG_FB_MXS)		  += mxsfb.o
 obj-$(CONFIG_FB_SSD1307)	  += ssd1307fb.o
 obj-$(CONFIG_FB_SIMPLE)           += simplefb.o
-
+obj-$(CONFIG_HISI_FB_3650)        += hisi/dss/
+obj-$(CONFIG_HISI_FB_3660)        += hisi/dss/
+obj-$(CONFIG_HISI_FB_6250)        += hisi/dss/
+obj-$(CONFIG_HISI_FB_970)         += hisi/dss/
 # the test framebuffer is last
 obj-$(CONFIG_FB_VIRTUAL)          += vfb.o

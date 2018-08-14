@@ -194,3 +194,13 @@ intel-soc-pmic-objs		:= intel_soc_pmic_core.o intel_soc_pmic_crc.o
 intel-soc-pmic-$(CONFIG_INTEL_PMC_IPC)	+= intel_soc_pmic_bxtwc.o
 obj-$(CONFIG_INTEL_SOC_PMIC)	+= intel-soc-pmic.o
 obj-$(CONFIG_MFD_MT6397)	+= mt6397-core.o
+
+obj-$(CONFIG_HISI_PMIC)		 += hisi_pmic.o
+obj-$(CONFIG_HISI_PMIC_PMU_SPMI)		 += hisi_pmic_spmi.o
+obj-$(CONFIG_HISI_PMIC_MNTN)     += hisi_pmic_mntn.o
+obj-$(CONFIG_HISI_PMIC_MNTN_SPMI)     += hisi_pmic_mntn_spmi.o
+obj-$(CONFIG_HISI_IP_CORE)		+= hisi_kirin950_core.o
+obj-$(CONFIG_HISI_IP_PMIC)		+= hisi_ip_pmic.o
+obj-$(CONFIG_MFD_HISI_IP_CORE)		+= hisi_ip_core.o
+obj-$(CONFIG_HISI_FREQ_AUTODOWN)		+= hisi_freq_autodown.o
+obj-$(CONFIG_HISI_CHARGER_POWER)     += hisi_charger_power.o

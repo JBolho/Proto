@@ -14,6 +14,7 @@ obj-$(CONFIG_COMMON_CLK)	+= clk-gpio.o
 ifeq ($(CONFIG_OF), y)
 obj-$(CONFIG_COMMON_CLK)	+= clk-conf.o
 endif
+obj-$(CONFIG_HISI_CLK_DEBUG)	+= hisi-clk-debug.o
 
 # hardware specific clock types
 # please keep this section sorted lexicographically by file/directory path name
@@ -51,7 +52,10 @@ obj-$(CONFIG_COMMON_CLK_PWM)		+= clk-pwm.o
 obj-$(CONFIG_COMMON_CLK_AT91)		+= at91/
 obj-y					+= bcm/
 obj-$(CONFIG_ARCH_BERLIN)		+= berlin/
-obj-$(CONFIG_ARCH_HISI)			+= hisilicon/
+obj-$(CONFIG_ARCH_HISI)		+= hisi/
+obj-$(CONFIG_ARCH_HI3xxx) 		+= hisilicon/
+obj-$(CONFIG_ARCH_HIP04) 		+= hisilicon/
+obj-$(CONFIG_ARCH_HIX5HD2) 		+= hisilicon/
 obj-$(CONFIG_ARCH_MXC)			+= imx/
 obj-$(CONFIG_MACH_INGENIC)		+= ingenic/
 obj-$(CONFIG_COMMON_CLK_KEYSTONE)	+= keystone/

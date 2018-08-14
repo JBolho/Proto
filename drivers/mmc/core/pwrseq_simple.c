@@ -33,7 +33,7 @@ static void mmc_pwrseq_simple_set_gpios_value(struct mmc_pwrseq_simple *pwrseq,
 	struct gpio_descs *reset_gpios = pwrseq->reset_gpios;
 	int values[reset_gpios->ndescs];
 
-	for (i = 0; i < reset_gpios->ndescs; i++)
+	for (i = 0; i < reset_gpios->ndescs; i++)/*lint !e574*/
 		values[i] = value;
 
 	gpiod_set_array_value_cansleep(reset_gpios->ndescs, reset_gpios->desc,
@@ -119,7 +119,7 @@ struct mmc_pwrseq *mmc_pwrseq_simple_alloc(struct mmc_host *host,
 
 	pwrseq->pwrseq.ops = &mmc_pwrseq_simple_ops;
 
-	return &pwrseq->pwrseq;
+	return &pwrseq->pwrseq;/*lint !e429*/
 clk_put:
 	if (!IS_ERR(pwrseq->ext_clk))
 		clk_put(pwrseq->ext_clk);

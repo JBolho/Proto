@@ -113,7 +113,7 @@ static int ion_cma_phys(struct ion_heap *heap, struct ion_buffer *buffer,
 	struct device *dev = cma_heap->dev;
 	struct ion_cma_buffer_info *info = buffer->priv_virt;
 
-	dev_dbg(dev, "Return buffer %p physical address %pa\n", buffer,
+	dev_dbg(dev, "Return buffer %p physical address 0x%pa\n", buffer,
 		&info->handle);
 
 	*addr = info->handle;
@@ -168,6 +168,8 @@ static struct ion_heap_ops ion_cma_ops = {
 	.map_user = ion_cma_mmap,
 	.map_kernel = ion_cma_map_kernel,
 	.unmap_kernel = ion_cma_unmap_kernel,
+	.map_iommu = ion_heap_map_iommu,
+	.unmap_iommu = ion_heap_unmap_iommu,
 };
 
 struct ion_heap *ion_cma_heap_create(struct ion_platform_heap *data)
@@ -186,7 +188,7 @@ struct ion_heap *ion_cma_heap_create(struct ion_platform_heap *data)
 	 */
 	cma_heap->dev = data->priv;
 	cma_heap->heap.type = ION_HEAP_TYPE_DMA;
-	return &cma_heap->heap;
+	return &cma_heap->heap;/*lint !e429*/
 }
 
 void ion_cma_heap_destroy(struct ion_heap *heap)

@@ -525,6 +525,12 @@ struct v4l2_pix_format {
 #define V4L2_PIX_FMT_YUV420  v4l2_fourcc('Y', 'U', '1', '2') /* 12  YUV 4:2:0     */
 #define V4L2_PIX_FMT_HI240   v4l2_fourcc('H', 'I', '2', '4') /*  8  8-bit color   */
 #define V4L2_PIX_FMT_HM12    v4l2_fourcc('H', 'M', '1', '2') /*  8  YUV 4:2:0 16x16 macroblocks */
+/*linux kernel4.10 update, add 4 format, 20160303, begin*/
+#define V4L2_PIX_FMT_RAW8    v4l2_fourcc('R', 'A', 'W', '8')
+#define V4L2_PIX_FMT_RAW10   v4l2_fourcc('R', 'A', 'W', 'X')
+#define V4L2_PIX_FMT_RAW12   v4l2_fourcc('R', 'A', 'W', '2')
+#define V4L2_PIX_FMT_RAW14   v4l2_fourcc('R', 'A', 'W', '4')
+/*linux kernel4.10 update, add 4 format, 20160303, end*/
 #define V4L2_PIX_FMT_M420    v4l2_fourcc('M', '4', '2', '0') /* 12  YUV 4:2:0 2 lines y, 1 line uv interleaved */
 
 /* two planes -- one Y, one Cr + Cb interleaved  */
@@ -2097,7 +2103,7 @@ struct v4l2_event {
 		struct v4l2_event_frame_sync	frame_sync;
 		struct v4l2_event_src_change	src_change;
 		struct v4l2_event_motion_det	motion_det;
-		__u8				data[64];
+		__u8				data[128];
 	} u;
 	__u32				pending;
 	__u32				sequence;

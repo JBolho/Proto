@@ -24,6 +24,7 @@
 #include <linux/module.h>
 #include <linux/hrtimer.h>
 #include <linux/kmemleak.h>
+#include <linux/platform_data/remoteproc-hisi.h>
 
 #ifdef DEBUG
 /* For development, we want to crash whenever the ring is screwed. */
@@ -214,7 +215,11 @@ static inline int virtqueue_add(struct virtqueue *_vq,
 	for (n = 0; n < out_sgs; n++) {
 		for (sg = sgs[n]; sg; sg = sg_next(sg)) {
 			desc[i].flags = cpu_to_virtio16(_vq->vdev, VRING_DESC_F_NEXT);
+#ifdef CONFIG_HISI_REMOTEPROC
+			desc[i].addr = hisp_sg2virtio(_vq, sg);
+#else
 			desc[i].addr = cpu_to_virtio64(_vq->vdev, sg_phys(sg));
+#endif
 			desc[i].len = cpu_to_virtio32(_vq->vdev, sg->length);
 			prev = i;
 			i = virtio16_to_cpu(_vq->vdev, desc[i].next);
@@ -223,7 +228,11 @@ static inline int virtqueue_add(struct virtqueue *_vq,
 	for (; n < (out_sgs + in_sgs); n++) {
 		for (sg = sgs[n]; sg; sg = sg_next(sg)) {
 			desc[i].flags = cpu_to_virtio16(_vq->vdev, VRING_DESC_F_NEXT | VRING_DESC_F_WRITE);
+#ifdef CONFIG_HISI_REMOTEPROC
+			desc[i].addr = hisp_sg2virtio(_vq, sg);
+#else
 			desc[i].addr = cpu_to_virtio64(_vq->vdev, sg_phys(sg));
+#endif
 			desc[i].len = cpu_to_virtio32(_vq->vdev, sg->length);
 			prev = i;
 			i = virtio16_to_cpu(_vq->vdev, desc[i].next);
@@ -781,7 +790,7 @@ struct virtqueue *vring_new_virtqueue(unsigned int index,
 	}
 	vq->data[i] = NULL;
 
-	return &vq->vq;
+	return &vq->vq; /*lint !e429*/
 }
 EXPORT_SYMBOL_GPL(vring_new_virtqueue);
 

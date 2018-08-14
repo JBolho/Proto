@@ -13,6 +13,8 @@
 #include <scsi/scsi_device.h>
 #include <scsi/scsi_driver.h>
 #include <scsi/scsi_host.h>
+#include <linux/blkdev.h>
+#include <linux/blk-mq.h>
 
 #include "scsi_priv.h"
 
@@ -53,7 +55,21 @@ static int scsi_dev_type_suspend(struct device *dev,
 {
 	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
 	int err;
+#ifdef CONFIG_SCSI_HISI_MQ
+	struct scsi_device *sdp = to_scsi_device(dev);
 
+	err = cb(dev, pm);
+	if(err)
+		return err;
+	/* flush pending in-flight resume operations, suspend is synchronous */
+	async_synchronize_full_domain(&scsi_sd_pm_domain);
+
+	if(sdp->request_queue && sdp->request_queue->mq_ops){
+		blk_mq_freeze_queue(sdp->request_queue);
+	}
+
+	err = scsi_device_quiesce(to_scsi_device(dev));
+#else
 	/* flush pending in-flight resume operations, suspend is synchronous */
 	async_synchronize_full_domain(&scsi_sd_pm_domain);
 
@@ -64,6 +80,7 @@ static int scsi_dev_type_suspend(struct device *dev,
 			scsi_device_resume(to_scsi_device(dev));
 	}
 	dev_dbg(dev, "scsi suspend: %d\n", err);
+#endif
 	return err;
 }
 
@@ -72,11 +89,19 @@ static int scsi_dev_type_resume(struct device *dev,
 {
 	const struct dev_pm_ops *pm = dev->driver ? dev->driver->pm : NULL;
 	int err = 0;
+#ifdef CONFIG_SCSI_HISI_MQ
+	struct scsi_device *sdp = to_scsi_device(dev);
+	scsi_device_resume(to_scsi_device(dev));
+	if(sdp->request_queue && sdp->request_queue->mq_ops){
+		blk_mq_unfreeze_queue(sdp->request_queue);
+	}
+#endif
 
 	err = cb(dev, pm);
+#ifndef CONFIG_SCSI_HISI_MQ
 	scsi_device_resume(to_scsi_device(dev));
+#endif
 	dev_dbg(dev, "scsi resume: %d\n", err);
-
 	if (err == 0) {
 		pm_runtime_disable(dev);
 		pm_runtime_set_active(dev);

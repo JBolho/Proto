@@ -490,6 +490,7 @@ static void iommu_enable_irq_remapping(struct intel_iommu *iommu)
 	writel(iommu->gcmd, iommu->reg + DMAR_GCMD_REG);
 
 	IOMMU_WAIT_OP(iommu, DMAR_GSTS_REG,
+			// cppcheck-suppress *
 		      readl, (sts & DMA_GSTS_IRES), sts);
 
 	/*

@@ -15,6 +15,9 @@
 #include <linux/slab.h>
 #include <linux/io.h>
 #include <linux/err.h>
+#ifdef CONFIG_HISI_CLK_DEBUG
+#include "hisi-clk-debug.h"
+#endif
 
 /*
  * DOC: basic adjustable multiplexer clock that cannot gate
@@ -49,8 +52,8 @@ static u8 clk_mux_get_parent(struct clk_hw *hw)
 
 		for (i = 0; i < num_parents; i++)
 			if (mux->table[i] == val)
-				return i;
-		return -EINVAL;
+				return i;/*[false alarm]:return */
+		return -EINVAL;/*lint !e570 */
 	}
 
 	if (val && (mux->flags & CLK_MUX_INDEX_BIT))
@@ -59,8 +62,8 @@ static u8 clk_mux_get_parent(struct clk_hw *hw)
 	if (val && (mux->flags & CLK_MUX_INDEX_ONE))
 		val--;
 
-	if (val >= num_parents)
-		return -EINVAL;
+	if (val >= num_parents) /*lint !e574 */
+		return -EINVAL; /*lint !e570 */
 
 	return val;
 }
@@ -104,10 +107,52 @@ static int clk_mux_set_parent(struct clk_hw *hw, u8 index)
 	return 0;
 }
 
+#ifdef CONFIG_HISI_CLK_DEBUG
+static int hisi_selreg_check(struct clk_hw *hw)
+{
+	struct clk_mux *mux = to_clk_mux(hw);
+	struct clk *clk = hw->clk;
+	u32 val = 0;
+
+	val = readl(mux->reg) >> mux->shift;
+	val &= mux->mask;
+	if (val && (mux->flags & CLK_MUX_INDEX_BIT))
+		val = ffs(val) - 1;
+
+	if (val && (mux->flags & CLK_MUX_INDEX_ONE))
+		val--;
+
+	if (NULL == clk_get_parent(clk))
+		return 3;
+
+	if (clk_get_parent_by_index(clk, val) == clk_get_parent(clk))
+		return 1;
+	else
+		return 0;
+}
+
+static int hi3xxx_dumpmux(struct clk_hw *hw, char* buf)
+{
+	struct clk_mux *mux = to_clk_mux(hw);
+	u32 val = 0;
+
+	if (mux->reg && buf) {
+		val = readl(mux->reg) ;
+		snprintf(buf, DUMP_CLKBUFF_MAX_SIZE, "[%s] : regAddress = 0x%pK, regval = 0x%x\n", __clk_get_name(hw->clk), mux->reg, val);
+	}
+	return 0;
+
+}
+#endif
+
 const struct clk_ops clk_mux_ops = {
 	.get_parent = clk_mux_get_parent,
 	.set_parent = clk_mux_set_parent,
 	.determine_rate = __clk_mux_determine_rate,
+#ifdef CONFIG_HISI_CLK_DEBUG
+	.check_selreg = hisi_selreg_check,
+	.dump_reg = hi3xxx_dumpmux,
+#endif
 };
 EXPORT_SYMBOL_GPL(clk_mux_ops);
 
@@ -165,7 +210,7 @@ struct clk *clk_register_mux_table(struct device *dev, const char *name,
 	if (IS_ERR(clk))
 		kfree(mux);
 
-	return clk;
+	return clk; /*lint !e593 */
 }
 EXPORT_SYMBOL_GPL(clk_register_mux_table);
 

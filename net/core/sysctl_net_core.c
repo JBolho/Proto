@@ -22,6 +22,17 @@
 #include <net/busy_poll.h>
 #include <net/pkt_sched.h>
 
+#ifdef CONFIG_HW_CROSSLAYER_OPT
+#include <net/tcp_crosslayer.h>
+#endif
+
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+#include <huawei_platform/emcom/smartcare/network_measurement/nm.h>
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
+
+#ifdef CONFIG_HUAWEI_BASTET
+extern int g_FastGrabDscp;
+#endif
 static int zero = 0;
 static int one = 1;
 static int min_sndbuf = SOCK_MIN_SNDBUF;
@@ -402,6 +413,76 @@ static struct ctl_table net_core_table[] = {
 		.extra1		= &one,
 		.extra2		= &max_skb_frags,
 	},
+#ifdef CONFIG_HUAWEI_BASTET
+	{
+		.procname	= "fg_dscp",
+		.data		= &g_FastGrabDscp,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
+#endif
+#ifdef CONFIG_HW_CROSSLAYER_OPT
+	{
+		/* Aspen log level */
+		.procname	= "aspen_log_level",
+		.data		= &aspen_log_level,
+		.maxlen		= sizeof(int),
+		.mode		= 0600,
+		.proc_handler   = proc_dointvec
+	},
+	{
+		/* Switch of crosslayer dropped notification */
+		.procname	= "aspen_tcp_cdn",
+		.data		= &aspen_tcp_cdn,
+		.maxlen		= sizeof(int),
+		.mode		= 0600,
+		.proc_handler	= proc_dointvec
+	},
+#ifdef CONFIG_HW_CROSSLAYER_OPT_DBG_MODULE
+	{
+		.procname       = "aspen_monitor_port_range",
+		.data           = &aspen_monitor_ports.range,
+		.maxlen         = sizeof(aspen_monitor_ports.range),
+		.mode           = 0600,
+		.proc_handler   = proc_aspen_monitor_port_range,
+	},
+	{
+		.procname       = "aspen_monitor",
+		.maxlen         = ASPEN_MONITOR_BUF_MAX,
+		.mode           = 0400,
+		.proc_handler   = proc_aspen_monitor_info,
+	},
+#endif /* CONFIG_HW_CROSSLAYER_OPT_DBG_MODULE */
+#endif /* CONFIG_HW_CROSSLAYER_OPT */
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+	{
+		.procname	= "netmeasure",
+		.maxlen		= NM_SAMPLE_VALVE_BUF_MAX,
+		.mode		= 0600,
+		.proc_handler	= proc_sample_valve
+	},
+	{
+		.procname	= "netmeasure_timeout",
+		.data		= &network_measure_timeouts,
+		.maxlen		= sizeof(int),
+		.mode		= 0600,
+		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname	= "netmeasure_tcp",
+		.data		= &network_measure_tcp,
+		.maxlen		= sizeof(int),
+		.mode		= 0600,
+		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname	= "netmeasure_sampled_uids",
+		.maxlen		= NM_SAMPLE_UID_BUF_MAX,
+		.mode		= 0600,
+		.proc_handler	= proc_sample_uid_list
+	},
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
 	{ }
 };
 

@@ -1067,8 +1067,8 @@ static u32 s32ton(__s32 value, unsigned n)
 {
 	s32 a = value >> (n - 1);
 	if (a && a != -1)
-		return value < 0 ? 1 << (n - 1) : (1 << (n - 1)) - 1;
-	return value & ((1 << n) - 1);
+		return value < 0 ? 1 << (n - 1) : (1 << (n - 1)) - 1; /* [false alarm]:this is original code */
+	return value & ((1 << n) - 1); /* [false alarm]:this is original code */
 }
 
 /*
@@ -2060,6 +2060,13 @@ static const struct hid_device_id hid_have_special_driver[] = {
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_NINTENDO, USB_DEVICE_ID_NINTENDO_WIIMOTE) },
 	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_NINTENDO, USB_DEVICE_ID_NINTENDO_WIIMOTE2) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_RAZER, USB_DEVICE_ID_RAZER_BLADE_14) },
+#if IS_ENABLED(CONFIG_HID_VR)
+	{ HID_USB_DEVICE(USB_VENDOR_ID_HUAWEI, USB_DEVICE_ID_HUAWEI_VR) },
+	{ HID_USB_DEVICE(USB_VENDOR_ID_HUAWEI, USB_DEVICE_ID_HUAWEI_VR_1) },
+#endif
+#if IS_ENABLED(CONFIG_HID_HUAWEI)
+	{ HID_USB_DEVICE(USB_VENDOR_ID_HUAWEI, USB_DEVICE_ID_HUAWEI_HEADSET) },
+#endif
 	{ }
 };
 

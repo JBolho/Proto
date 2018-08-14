@@ -6,4 +6,9 @@ config RPMSG
 	select VIRTIO
 	select VIRTUALIZATION
 
+config HISI_HISTAR_ISP
+	tristate "Histar ISP rpmsg client"
+	depends on RPMSG
+	depends on ARCH_HISI
+
 endmenu

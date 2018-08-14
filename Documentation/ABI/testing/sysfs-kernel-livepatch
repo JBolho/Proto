@@ -34,6 +34,7 @@ Description:
 		that is patched within the object.
 
 What:		/sys/kernel/livepatch/<patch>/<object>/<function>
+		or: /sys/kernel/livepatch/<patch>/<object>/<function-number>
 Date:		Nov 2014
 KernelVersion:	3.19.0
 Contact:	live-patching@vger.kernel.org

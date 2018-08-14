@@ -40,6 +40,9 @@
 #include <linux/log2.h>
 #include <linux/inetdevice.h>
 #include <net/addrconf.h>
+#ifdef CONFIG_HUAWEI_XENGINE
+#include <huawei_platform/emcom/emcom_xengine.h>
+#endif
 
 #define DEBUG
 #define NEIGH_DEBUG 1
@@ -859,7 +862,8 @@ static void neigh_probe(struct neighbour *neigh)
 	if (skb)
 		skb = skb_clone(skb, GFP_ATOMIC);
 	write_unlock(&neigh->lock);
-	neigh->ops->solicit(neigh, skb);
+	if (neigh->ops->solicit)
+		neigh->ops->solicit(neigh, skb);
 	atomic_inc(&neigh->probes);
 	kfree_skb(skb);
 }
@@ -1308,7 +1312,12 @@ int neigh_resolve_output(struct neighbour *neigh, struct sk_buff *skb)
 		} while (read_seqretry(&neigh->ha_lock, seq));
 
 		if (err >= 0)
+		{
+#ifdef CONFIG_HUAWEI_XENGINE
+			Emcom_Xengine_UdpEnqueue(skb);
+#endif
 			rc = dev_queue_xmit(skb);
+		}
 		else
 			goto out_kfree_skb;
 	}

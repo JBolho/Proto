@@ -18,6 +18,10 @@
 
 #include <asm/ioctls.h>
 
+#ifdef CONFIG_TASK_PROTECT_LRU
+#include <linux/hisi/protect_lru.h>
+#endif
+
 /* So that the fiemap access checks can't overflow on 32 bit machines. */
 #define FIEMAP_MAX_EXTENTS	(UINT_MAX / sizeof(struct fiemap_extent))
 
@@ -599,6 +603,16 @@ int do_vfs_ioctl(struct file *filp, unsigned int fd, unsigned int cmd,
 
 	case FIGETBSZ:
 		return put_user(inode->i_sb->s_blocksize, argp);
+
+#ifdef CONFIG_TASK_PROTECT_LRU
+	case FPROTECTLRUSET:
+		error = ioctl_protect_lru_set(filp, arg);
+		break;
+
+	case FPROTECTLRUGET:
+		error = ioctl_protect_lru_get(filp);
+		break;
+#endif
 
 	default:
 		if (S_ISREG(inode->i_mode))

@@ -279,6 +279,7 @@ static void davinci_fifo_data_trans(struct mmc_davinci_host *host,
 	host->buffer = p;
 }
 
+/*cppcheck-suppress * */
 static void mmc_davinci_start_command(struct mmc_davinci_host *host,
 		struct mmc_command *cmd)
 {

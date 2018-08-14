@@ -313,6 +313,7 @@ mmc_omap_show_cover_switch(struct device *dev, struct device_attribute *attr,
 	struct mmc_host *mmc = container_of(dev, struct mmc_host, class_dev);
 	struct mmc_omap_slot *slot = mmc_priv(mmc);
 
+	/*cppcheck-suppress * */
 	return sprintf(buf, "%s\n", mmc_omap_cover_is_open(slot) ? "open" :
 		       "closed");
 }
@@ -326,6 +327,7 @@ mmc_omap_show_slot_name(struct device *dev, struct device_attribute *attr,
 	struct mmc_host *mmc = container_of(dev, struct mmc_host, class_dev);
 	struct mmc_omap_slot *slot = mmc_priv(mmc);
 
+	/*cppcheck-suppress * */
 	return sprintf(buf, "%s\n", slot->pdata->name);
 }
 
@@ -705,10 +707,12 @@ static void mmc_omap_report_irq(struct mmc_omap_host *host, u16 status)
 	int i;
 	char res[64], *buf = res;
 
+	/*cppcheck-suppress * */
 	buf += sprintf(buf, "MMC IRQ 0x%x:", status);
 
 	for (i = 0; i < ARRAY_SIZE(mmc_omap_status_bits); i++)
 		if (status & (1 << i))
+			/*cppcheck-suppress * */
 			buf += sprintf(buf, " %s", mmc_omap_status_bits[i]);
 	dev_vdbg(mmc_dev(host->mmc), "%s\n", res);
 }

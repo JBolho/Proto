@@ -18,6 +18,9 @@
 #include <linux/mutex.h>
 #include <linux/rwsem.h>
 #include "leds.h"
+#if defined(CONFIG_LEDS_HISI) || defined(CONFIG_LEDS_HISI_SPMI)
+#include <linux/string.h>
+#endif
 
 DECLARE_RWSEM(leds_list_lock);
 EXPORT_SYMBOL_GPL(leds_list_lock);
@@ -192,14 +195,21 @@ void led_set_brightness(struct led_classdev *led_cdev,
 {
 	int ret = 0;
 
-	/* delay brightness if soft-blink is active */
+	/* delay brightness setting if need to stop soft-blink timer */
 	if (led_cdev->blink_delay_on || led_cdev->blink_delay_off) {
 		led_cdev->delayed_set_value = brightness;
-		if (brightness == LED_OFF)
+#if defined(CONFIG_LEDS_HISI) || defined(CONFIG_LEDS_HISI_SPMI)
+		if(!(strcmp(led_cdev->name, "red") && strcmp(led_cdev->name, "green") && strcmp(led_cdev->name, "blue"))) {
+			led_stop_software_blink(led_cdev);
+			led_set_brightness_async(led_cdev, (enum led_brightness)led_cdev->delayed_set_value);
+		} else {
 			schedule_work(&led_cdev->set_brightness_work);
+		}
+#else
+		schedule_work(&led_cdev->set_brightness_work);
+#endif
 		return;
 	}
-
 	if (led_cdev->flags & SET_BRIGHTNESS_ASYNC) {
 		led_set_brightness_async(led_cdev, brightness);
 		return;

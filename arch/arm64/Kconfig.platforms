@@ -36,6 +36,8 @@ config ARCH_LAYERSCAPE
 
 config ARCH_HISI
 	bool "Hisilicon SoC Family"
+	select PINCTRL
+	select ARM_CCI
 	help
 	  This enables support for Hisilicon ARMv8 SoC family
 

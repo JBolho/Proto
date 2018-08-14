@@ -14,8 +14,18 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/cputime.h>
+#ifdef CONFIG_CPU_FREQ_POWER_STAT
+#include <linux/of.h>
+#include <linux/sched.h>
+#endif
+
 
 static spinlock_t cpufreq_stats_lock;
+#ifdef CONFIG_CPU_FREQ_POWER_STAT
+static DEFINE_SPINLOCK(cpufreq_power_lock);
+static DEFINE_PER_CPU(bool, initialized);
+static DEFINE_PER_CPU(unsigned long, last_current);
+#endif
 
 struct cpufreq_stats {
 	unsigned int total_trans;
@@ -27,6 +37,9 @@ struct cpufreq_stats {
 	unsigned int *freq_table;
 #ifdef CONFIG_CPU_FREQ_STAT_DETAILS
 	unsigned int *trans_table;
+#endif
+#ifdef CONFIG_CPU_FREQ_POWER_STAT
+	unsigned int *curr;
 #endif
 };
 
@@ -105,6 +118,30 @@ static ssize_t show_trans_table(struct cpufreq_policy *policy, char *buf)
 cpufreq_freq_attr_ro(trans_table);
 #endif
 
+#ifdef CONFIG_CPU_FREQ_POWER_STAT
+void acct_update_power(struct task_struct *task, cputime_t cputime)
+{
+	unsigned int cpu;
+	unsigned long curr, flags;
+
+	if (!task)
+		return;
+
+	cpu = task_cpu(task);
+	spin_lock_irqsave(&cpufreq_power_lock, flags);
+	if (!per_cpu(initialized, cpu)) {
+		spin_unlock_irqrestore(&cpufreq_power_lock, flags);
+		return;
+	}
+	curr = per_cpu(last_current, cpu);
+	spin_unlock_irqrestore(&cpufreq_power_lock, flags);
+
+	if (task->cpu_power != ULLONG_MAX)
+		task->cpu_power += (unsigned long long)(curr * cputime_to_usecs(cputime));
+}
+EXPORT_SYMBOL_GPL(acct_update_power);
+#endif
+
 cpufreq_freq_attr_ro(total_trans);
 cpufreq_freq_attr_ro(time_in_state);
 
@@ -130,6 +167,121 @@ static int freq_table_get_index(struct cpufreq_stats *stats, unsigned int freq)
 	return -1;
 }
 
+#ifdef CONFIG_CPU_FREQ_POWER_STAT
+static void cpufreq_power_stats_create(struct cpufreq_policy *policy, unsigned int cpu)
+{
+	struct device *cpu_dev;
+	struct device_node *cpu_node;
+	unsigned int alloc_size;
+	struct cpufreq_stats *stats;
+	unsigned int i, curr;
+	unsigned long flags;
+	int ret = 0;
+
+	if (!policy)
+		return;
+
+	stats = policy->stats;
+	if (!stats)
+		return;
+
+	alloc_size = stats->max_state * sizeof(unsigned int);
+	stats->curr = kzalloc(alloc_size, GFP_KERNEL);
+	if (!stats->curr)
+		return;
+
+	cpu_dev = get_cpu_device(cpu);
+	if (!cpu_dev) {
+		pr_err("%s: failed to get cpu%d device\n", __func__,
+		       cpu);
+		goto err_exit;
+	}
+
+	cpu_node = cpu_dev->of_node;
+	if (!cpu_node)
+		goto err_exit;
+
+	ret = of_property_read_u32_array(cpu_node, "current",
+			stats->curr, stats->max_state);
+	if (ret)
+		goto err_exit;
+
+	curr = stats->curr[stats->last_index];
+	spin_lock_irqsave(&cpufreq_power_lock, flags);
+	/*lint -e570 -e574*/
+	for_each_cpu(i, policy->cpus) {
+		per_cpu(initialized, i) = true;
+		per_cpu(last_current, i) = (unsigned long)curr;
+	}
+	/*lint +e570 +e574*/
+	spin_unlock_irqrestore(&cpufreq_power_lock, flags);
+
+	return;
+
+err_exit:
+	kfree(stats->curr);
+	stats->curr = NULL;
+}
+
+
+static void cpufreq_power_stats_update(struct cpufreq_policy *policy)
+{
+	struct cpufreq_stats *stats;
+	unsigned int i, curr;
+	unsigned long flags;
+
+	if (!policy)
+		return;
+
+	stats = policy->stats;
+	if (!stats)
+		return;
+
+	if (!stats->curr)
+		return;
+
+	curr = stats->curr[stats->last_index];
+	spin_lock_irqsave(&cpufreq_power_lock, flags);
+	/*lint -e570 -e574*/
+	for_each_cpu(i, policy->cpus) {
+		per_cpu(initialized, i) = true;
+		per_cpu(last_current, i) = (unsigned long)curr;
+	}
+	/*lint +e570 +e574*/
+	spin_unlock_irqrestore(&cpufreq_power_lock, flags);
+	return;
+}
+
+static void cpufreq_power_stats_free(struct cpufreq_policy *policy)
+{
+	struct cpufreq_stats *stats;
+	unsigned int i;
+	unsigned long flags;
+
+	if (!policy)
+		return;
+
+	spin_lock_irqsave(&cpufreq_power_lock, flags);
+	/*lint -e570 -e574*/
+	for_each_cpu(i, policy->cpus) {
+		per_cpu(initialized, i) = false;
+	}
+	/*lint +e570 +e574*/
+	spin_unlock_irqrestore(&cpufreq_power_lock, flags);
+
+	stats = policy->stats;
+	if (!stats)
+		return;
+
+	if (!stats->curr)
+		return;
+
+	kfree(stats->curr);
+	return;
+
+}
+#endif
+
 static void __cpufreq_stats_free_table(struct cpufreq_policy *policy)
 {
 	struct cpufreq_stats *stats = policy->stats;
@@ -141,6 +293,9 @@ static void __cpufreq_stats_free_table(struct cpufreq_policy *policy)
 	pr_debug("%s: Free stats table\n", __func__);
 
 	sysfs_remove_group(&policy->kobj, &stats_attr_group);
+#ifdef CONFIG_CPU_FREQ_POWER_STAT
+	cpufreq_power_stats_free(policy);
+#endif
 	kfree(stats->time_in_state);
 	kfree(stats);
 	policy->stats = NULL;
@@ -213,11 +368,17 @@ static int __cpufreq_stats_create_table(struct cpufreq_policy *policy)
 	stats->last_index = freq_table_get_index(stats, policy->cur);
 
 	policy->stats = stats;
+#ifdef CONFIG_CPU_FREQ_POWER_STAT
+	cpufreq_power_stats_create(policy, cpu);
+#endif
 	ret = sysfs_create_group(&policy->kobj, &stats_attr_group);
 	if (!ret)
 		return 0;
 
 	/* We failed, release resources */
+#ifdef CONFIG_CPU_FREQ_POWER_STAT
+	cpufreq_power_stats_free(policy);
+#endif
 	policy->stats = NULL;
 	kfree(stats->time_in_state);
 free_stat:
@@ -293,6 +454,9 @@ static int cpufreq_stat_notifier_trans(struct notifier_block *nb,
 	cpufreq_stats_update(stats);
 
 	stats->last_index = new_index;
+#ifdef CONFIG_CPU_FREQ_POWER_STAT
+	cpufreq_power_stats_update(policy);
+#endif
 #ifdef CONFIG_CPU_FREQ_STAT_DETAILS
 	stats->trans_table[old_index * stats->max_state + new_index]++;
 #endif

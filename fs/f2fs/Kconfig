@@ -1,6 +1,8 @@
 config F2FS_FS
 	tristate "F2FS filesystem support"
 	depends on BLOCK
+	select CRYPTO
+	select CRYPTO_CRC32
 	help
 	  F2FS is based on Log-structured File System (LFS), which supports
 	  versatile "flash-friendly" features. The design has been focused on
@@ -11,6 +13,19 @@ config F2FS_FS
 	  the internal geometry or flash memory management schemes aka FTL, F2FS
 	  and tools support various parameters not only for configuring on-disk
 	  layout, but also for selecting allocation and cleaning algorithms.
+
+	  If unsure, say N.
+
+config F2FS_CLOSE_FUA
+	bool "F2FS closes FUA to improve performance for atomic write"
+	depends on F2FS_FS
+	default n
+	help
+	  Close FUA to make flush reduce work correctly, which can improve
+	  performance of atomic write. This should only be used in poor
+	  phone which requires performance more than stability. Otherwise,
+	  FUA should keep open to ensure stability of atomic write all the
+	  time.
 
 	  If unsure, say N.
 
@@ -26,6 +41,16 @@ config F2FS_STAT_FS
 	    - major filesystem information managed by f2fs currently
 	    - average SIT information about whole segments
 	    - current memory footprint consumed by f2fs.
+
+config F2FS_OVP_RESERVED
+	bool "F2FS ovp reserved to save small-nand phone's life"
+	depends on F2FS_FS
+	default n
+	help
+	  Reserve space gradually, which can help to decrease nand flash's
+	  GC counts and save small-nand phone's life.
+
+	  If unsure, say N.
 
 config F2FS_FS_XATTR
 	bool "F2FS extended attributes"
@@ -76,15 +101,7 @@ config F2FS_FS_ENCRYPTION
 	bool "F2FS Encryption"
 	depends on F2FS_FS
 	depends on F2FS_FS_XATTR
-	select CRYPTO_AES
-	select CRYPTO_CBC
-	select CRYPTO_ECB
-	select CRYPTO_XTS
-	select CRYPTO_CTS
-	select CRYPTO_CTR
-	select CRYPTO_SHA256
-	select KEYS
-	select ENCRYPTED_KEYS
+	select FS_ENCRYPTION
 	help
 	  Enable encryption of f2fs files and directories.  This
 	  feature is similar to ecryptfs, but it is more memory
@@ -100,3 +117,22 @@ config F2FS_IO_TRACE
 	  information and block IO patterns in the filesystem level.
 
 	  If unsure, say N.
+
+config HUAWEI_F2FS_DSM
+	bool "Listen f2fs kernel err"
+	default n
+	help
+		use huawei fs log radar
+
+config F2FS_FAULT_INJECTION
+	bool "F2FS fault injection facility"
+	depends on F2FS_FS
+	help
+	  Test F2FS to inject faults such as ENOMEM, ENOSPC, and so on.
+
+	  If unsure, say N.
+config HISI_F2FS_MTIME
+	bool "reduce freq to update mtime"
+	default n
+	help
+		reduce freq to update mtime

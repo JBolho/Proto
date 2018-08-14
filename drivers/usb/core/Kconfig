@@ -103,3 +103,9 @@ config USB_ULPI_BUS
 
 	  To compile this driver as a module, choose M here: the module will
 	  be called ulpi.
+
+config HUAWEI_DOCK_HEADSET_QUIRK
+	bool "Compatibility problem of HUAWEI DOCK and TypeC Headset"
+	depends on USB_SUPPORT
+	help
+	  Compatibility problem of HUAWEI DOCK and TypeC Headset.

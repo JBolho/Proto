@@ -50,6 +50,15 @@ extern void hotplug_cpu__broadcast_tick_pull(int dead_cpu);
 static inline void hotplug_cpu__broadcast_tick_pull(int dead_cpu) { }
 #endif
 
+
+#ifdef CONFIG_CPU_IDLE_GOV_MENU
+extern void menu_hrtimer_cancel(void);
+#else
+static inline void menu_hrtimer_cancel(void) {}
+#endif
+
+
+
 enum tick_broadcast_mode {
 	TICK_BROADCAST_OFF,
 	TICK_BROADCAST_ON,

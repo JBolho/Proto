@@ -93,9 +93,31 @@ kallsyms()
 	local aflags="${KBUILD_AFLAGS} ${KBUILD_AFLAGS_KERNEL}               \
 		      ${NOSTDINC_FLAGS} ${LINUXINCLUDE} ${KBUILD_CPPFLAGS}"
 
-	${NM} -n ${1} | \
-		scripts/kallsyms ${kallsymopt} | \
-		${CC} ${aflags} -c -o ${2} -x assembler-with-cpp -
+	if [ -n "${CONFIG_HUAWEI_HIDESYMS}" ]; then
+		local src_blacklist="$(cd `dirname $0`; pwd)/hw_hidesyms_blacklist.txt"
+		local tmp_blacklist=".tmp_hw_hidesyms_blacklist.txt"
+
+		# Get a pure blacklist
+		cat ${src_blacklist} | sed s/[[:space:]]//g | grep -v "#" | \
+			sed -e '/^$/d' > ${tmp_blacklist}
+
+		if [ -s "${tmp_blacklist}" ]; then
+			${NM} -n ${1} | \
+				grep -vw -f ${tmp_blacklist} | \
+				scripts/kallsyms ${kallsymopt} | \
+				${CC} ${aflags} -c -o ${2} -x assembler-with-cpp -
+		else
+			${NM} -n ${1} | \
+				scripts/kallsyms ${kallsymopt} | \
+				${CC} ${aflags} -c -o ${2} -x assembler-with-cpp -
+		fi
+
+		rm ${tmp_blacklist}
+	else
+		${NM} -n ${1} | \
+			scripts/kallsyms ${kallsymopt} | \
+			${CC} ${aflags} -c -o ${2} -x assembler-with-cpp -
+	fi
 }
 
 # Create map file with all symbols from ${1}

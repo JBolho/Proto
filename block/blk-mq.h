@@ -1,5 +1,7 @@
 #ifndef INT_BLK_MQ_H
 #define INT_BLK_MQ_H
+#include <linux/preempt.h>
+#include "blk-stat.h"
 
 struct blk_mq_tag_set;
 
@@ -20,6 +22,9 @@ struct blk_mq_ctx {
 
 	/* incremented at completion time */
 	unsigned long		____cacheline_aligned_in_smp rq_completed[2];
+#ifdef CONFIG_WBT
+	struct blk_rq_stat	stat[4];
+#endif
 
 	struct request_queue	*queue;
 	struct kobject		kobj;
@@ -69,6 +74,9 @@ void blk_mq_release(struct request_queue *q);
 struct blk_align_bitmap {
 	unsigned long word;
 	unsigned long depth;
+#ifdef CONFIG_HISI_BLK_MQ
+	int next_tag;
+#endif
 } ____cacheline_aligned_in_smp;
 
 static inline struct blk_mq_ctx *__blk_mq_get_ctx(struct request_queue *q,
@@ -88,17 +96,27 @@ static inline struct blk_mq_ctx *blk_mq_get_ctx(struct request_queue *q)
 	return __blk_mq_get_ctx(q, get_cpu());
 }
 
+#ifdef CONFIG_HISI_BLK_MQ
+static inline void blk_mq_put_ctx(struct blk_mq_ctx *ctx)
+{
+	barrier();
+	preempt_count_dec();
+}
+#else
 static inline void blk_mq_put_ctx(struct blk_mq_ctx *ctx)
 {
 	put_cpu();
 }
+#endif
 
 struct blk_mq_alloc_data {
 	/* input parameter */
 	struct request_queue *q;
 	gfp_t gfp;
 	bool reserved;
-
+#ifdef CONFIG_HISI_BLK_MQ
+	unsigned long io_flag;
+#endif
 	/* input & output parameter */
 	struct blk_mq_ctx *ctx;
 	struct blk_mq_hw_ctx *hctx;

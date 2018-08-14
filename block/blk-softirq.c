@@ -102,6 +102,21 @@ static struct notifier_block blk_cpu_notifier = {
 	.notifier_call	= blk_cpu_notify,
 };
 
+#ifdef CONFIG_HISI_MQ_DISPATCH_DECISION
+void hisi_blk_complete_request(struct request *req)
+{
+	struct list_head *list;
+	unsigned long flags;
+
+	local_irq_save(flags);
+	list = this_cpu_ptr(&blk_cpu_done);
+	list_add_tail(&req->ipi_list, list);
+	if (likely(list->next == &req->ipi_list))
+		raise_softirq_irqoff(BLOCK_SOFTIRQ);
+	local_irq_restore(flags);
+}
+#endif
+
 void __blk_complete_request(struct request *req)
 {
 	int ccpu, cpu;
@@ -167,6 +182,9 @@ void blk_complete_request(struct request *req)
 {
 	if (unlikely(blk_should_fake_timeout(req->q)))
 		return;
+#ifdef CONFIG_HISI_IO_LATENCY_TRACE
+	req_latency_check(req,REQ_PROC_STAGE_COMPLETE);
+#endif
 	if (!blk_mark_rq_complete(req))
 		__blk_complete_request(req);
 }

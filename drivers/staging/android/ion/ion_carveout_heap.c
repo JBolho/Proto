@@ -18,10 +18,12 @@
 #include <linux/err.h>
 #include <linux/genalloc.h>
 #include <linux/io.h>
+#include <linux/ion.h>
 #include <linux/mm.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
+
 #include "ion.h"
 #include "ion_priv.h"
 
@@ -29,6 +31,7 @@ struct ion_carveout_heap {
 	struct ion_heap heap;
 	struct gen_pool *pool;
 	ion_phys_addr_t base;
+	size_t size;
 };
 
 ion_phys_addr_t ion_carveout_allocate(struct ion_heap *heap,
@@ -40,7 +43,7 @@ ion_phys_addr_t ion_carveout_allocate(struct ion_heap *heap,
 	unsigned long offset = gen_pool_alloc(carveout_heap->pool, size);
 
 	if (!offset)
-		return ION_CARVEOUT_ALLOCATE_FAIL;
+		return ION_CARVEOUT_ALLOCATE_FAIL;/*lint !e570*/
 
 	return offset;
 }
@@ -51,7 +54,7 @@ void ion_carveout_free(struct ion_heap *heap, ion_phys_addr_t addr,
 	struct ion_carveout_heap *carveout_heap =
 		container_of(heap, struct ion_carveout_heap, heap);
 
-	if (addr == ION_CARVEOUT_ALLOCATE_FAIL)
+	if (addr == ION_CARVEOUT_ALLOCATE_FAIL)/*lint !e650*/
 		return;
 	gen_pool_free(carveout_heap->pool, addr, size);
 }
@@ -89,7 +92,7 @@ static int ion_carveout_heap_allocate(struct ion_heap *heap,
 		goto err_free;
 
 	paddr = ion_carveout_allocate(heap, size, align);
-	if (paddr == ION_CARVEOUT_ALLOCATE_FAIL) {
+	if (paddr == ION_CARVEOUT_ALLOCATE_FAIL) { /*lint !e650*/
 		ret = -ENOMEM;
 		goto err_free_table;
 	}
@@ -112,12 +115,14 @@ static void ion_carveout_heap_free(struct ion_buffer *buffer)
 	struct sg_table *table = buffer->priv_virt;
 	struct page *page = sg_page(table->sgl);
 	ion_phys_addr_t paddr = PFN_PHYS(page_to_pfn(page));
-
+/*the sync has done by caller, we don't need to do any more */
+#if 0
 	ion_heap_buffer_zero(buffer);
 
 	if (ion_buffer_cached(buffer))
 		dma_sync_sg_for_device(NULL, table->sgl, table->nents,
 							DMA_BIDIRECTIONAL);
+#endif
 
 	ion_carveout_free(heap, paddr, buffer->size);
 	sg_free_table(table);
@@ -135,6 +140,11 @@ static void ion_carveout_heap_unmap_dma(struct ion_heap *heap,
 {
 }
 
+static void ion_carveout_heap_buffer_zero(struct ion_buffer *buffer)
+{
+	ion_heap_buffer_zero(buffer);
+}
+
 static struct ion_heap_ops carveout_heap_ops = {
 	.allocate = ion_carveout_heap_allocate,
 	.free = ion_carveout_heap_free,
@@ -144,6 +154,9 @@ static struct ion_heap_ops carveout_heap_ops = {
 	.map_user = ion_heap_map_user,
 	.map_kernel = ion_heap_map_kernel,
 	.unmap_kernel = ion_heap_unmap_kernel,
+	.map_iommu = ion_heap_map_iommu,
+	.unmap_iommu = ion_heap_unmap_iommu,
+	.buffer_zero = ion_carveout_heap_buffer_zero,
 };
 
 struct ion_heap *ion_carveout_heap_create(struct ion_platform_heap *heap_data)
@@ -167,19 +180,20 @@ struct ion_heap *ion_carveout_heap_create(struct ion_platform_heap *heap_data)
 	if (!carveout_heap)
 		return ERR_PTR(-ENOMEM);
 
-	carveout_heap->pool = gen_pool_create(12, -1);
+	carveout_heap->pool = gen_pool_create(PAGE_SHIFT, -1);
 	if (!carveout_heap->pool) {
 		kfree(carveout_heap);
 		return ERR_PTR(-ENOMEM);
 	}
 	carveout_heap->base = heap_data->base;
+	carveout_heap->size = size;
 	gen_pool_add(carveout_heap->pool, carveout_heap->base, heap_data->size,
 		     -1);
 	carveout_heap->heap.ops = &carveout_heap_ops;
 	carveout_heap->heap.type = ION_HEAP_TYPE_CARVEOUT;
 	carveout_heap->heap.flags = ION_HEAP_FLAG_DEFER_FREE;
 
-	return &carveout_heap->heap;
+	return &carveout_heap->heap;/*lint !e429*/
 }
 
 void ion_carveout_heap_destroy(struct ion_heap *heap)

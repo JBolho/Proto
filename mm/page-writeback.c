@@ -38,6 +38,8 @@
 #include <linux/sched/rt.h>
 #include <linux/mm_inline.h>
 #include <trace/events/writeback.h>
+#include <linux/blk-cgroup.h>
+#include <linux/hisi/pagecache_debug.h>
 
 #include "internal.h"
 
@@ -278,7 +280,12 @@ static unsigned long zone_dirtyable_memory(struct zone *zone)
 	unsigned long nr_pages;
 
 	nr_pages = zone_page_state(zone, NR_FREE_PAGES);
-	nr_pages -= min(nr_pages, zone->dirty_balance_reserve);
+	/*
+	 * Pages reserved for the kernel should not be considered
+	 * dirtyable, to prevent a situation where reclaim has to
+	 * clean pages in order to balance the zones.
+	 */
+	nr_pages -= min(nr_pages, zone->totalreserve_pages);
 
 	nr_pages += zone_page_state(zone, NR_INACTIVE_FILE);
 	nr_pages += zone_page_state(zone, NR_ACTIVE_FILE);
@@ -327,12 +334,17 @@ static unsigned long highmem_dirtyable_memory(unsigned long total)
  * Returns the global number of pages potentially available for dirty
  * page cache.  This is the base value for the global dirty limits.
  */
-static unsigned long global_dirtyable_memory(void)
+unsigned long global_dirtyable_memory(void)
 {
 	unsigned long x;
 
 	x = global_page_state(NR_FREE_PAGES);
-	x -= min(x, dirty_balance_reserve);
+	/*
+	 * Pages reserved for the kernel should not be considered
+	 * dirtyable, to prevent a situation where reclaim has to
+	 * clean pages in order to balance the zones.
+	 */
+	x -= min(x, totalreserve_pages);
 
 	x += global_page_state(NR_INACTIVE_FILE);
 	x += global_page_state(NR_ACTIVE_FILE);
@@ -781,10 +793,11 @@ static long long pos_ratio_polynom(unsigned long setpoint,
 	x = div64_s64(((s64)setpoint - (s64)dirty) << RATELIMIT_CALC_SHIFT,
 		      (limit - setpoint) | 1);
 	pos_ratio = x;
+	/*lint -save -e504*/
 	pos_ratio = pos_ratio * x >> RATELIMIT_CALC_SHIFT;
 	pos_ratio = pos_ratio * x >> RATELIMIT_CALC_SHIFT;
 	pos_ratio += 1 << RATELIMIT_CALC_SHIFT;
-
+	/*lint -restore*/
 	return clamp(pos_ratio, 0LL, 2LL << RATELIMIT_CALC_SHIFT);
 }
 
@@ -1162,6 +1175,7 @@ static void wb_update_dirty_ratelimit(struct dirty_throttle_control *dtc,
 	unsigned long balanced_dirty_ratelimit;
 	unsigned long step;
 	unsigned long x;
+	unsigned long shift_times;
 
 	/*
 	 * The dirty rate will match the writeout rate in long term, except
@@ -1208,11 +1222,6 @@ static void wb_update_dirty_ratelimit(struct dirty_throttle_control *dtc,
 	 */
 	balanced_dirty_ratelimit = div_u64((u64)task_ratelimit * write_bw,
 					   dirty_rate | 1);
-	/*
-	 * balanced_dirty_ratelimit ~= (write_bw / N) <= write_bw
-	 */
-	if (unlikely(balanced_dirty_ratelimit > write_bw))
-		balanced_dirty_ratelimit = write_bw;
 
 	/*
 	 * We could safely do this and return immediately:
@@ -1286,7 +1295,8 @@ static void wb_update_dirty_ratelimit(struct dirty_throttle_control *dtc,
 	 * rate itself is constantly fluctuating. So decrease the track speed
 	 * when it gets close to the target. Helps eliminate pointless tremors.
 	 */
-	step >>= dirty_ratelimit / (2 * step + 1);
+	shift_times = dirty_ratelimit / (2 * step + 1);
+	step = shift_times >= 8 * sizeof(step) ? 0 : step >> shift_times;
 	/*
 	 * Limit the tracking speed to avoid overshooting.
 	 */
@@ -1458,7 +1468,7 @@ static long wb_min_pause(struct bdi_writeback *wb,
 		}
 	}
 
-	pause = HZ * pages / (task_ratelimit + 1);
+	pause = HZ * (u64)pages / (task_ratelimit + 1);
 	if (pause > max_pause) {
 		t = max_pause;
 		pages = task_ratelimit * t / roundup_pow_of_two(HZ);
@@ -1548,6 +1558,21 @@ static void balance_dirty_pages(struct address_space *mapping,
 		unsigned long m_dirty = 0;	/* stop bogus uninit warnings */
 		unsigned long m_thresh = 0;
 		unsigned long m_bg_thresh = 0;
+#ifdef CONFIG_BLK_DEV_THROTTLING
+		struct blkcg_gq *blkg;
+		unsigned int weight;
+
+		/*lint -save -e730*/
+		if (unlikely(!mapping->host || !mapping->host->i_sb ||
+			     !mapping->host->i_sb->s_bdev))
+		/*lint -restore*/
+			blkg = NULL;
+		else
+			blkg = task_blkg_get(current,
+					     mapping->host->i_sb->s_bdev);
+
+		task_blkg_inc_writer(blkg);
+#endif
 
 		/*
 		 * Unstable writes are a feature of certain networked
@@ -1623,6 +1648,11 @@ static void balance_dirty_pages(struct address_space *mapping,
 			if (mdtc)
 				m_intv = dirty_poll_interval(m_dirty, m_thresh);
 			current->nr_dirtied_pause = min(intv, m_intv);
+#ifdef CONFIG_BLK_DEV_THROTTLING
+			task_blkg_dec_writer(blkg);
+			task_blkg_put(blkg);
+#endif
+
 			break;
 		}
 
@@ -1674,6 +1704,14 @@ static void balance_dirty_pages(struct address_space *mapping,
 		dirty_ratelimit = wb->dirty_ratelimit;
 		task_ratelimit = ((u64)dirty_ratelimit * sdtc->pos_ratio) >>
 							RATELIMIT_CALC_SHIFT;
+
+#ifdef CONFIG_BLK_DEV_THROTTLING
+		weight = blkcg_weight(blkg);
+		if (weight != BLKIO_WEIGHT_DEFAULT)
+			task_ratelimit = (u64)task_ratelimit * weight /
+				BLKIO_WEIGHT_DEFAULT;
+#endif
+
 		max_pause = wb_max_pause(wb, sdtc->wb_dirty);
 		min_pause = wb_min_pause(wb, max_pause,
 					 task_ratelimit, dirty_ratelimit,
@@ -1716,6 +1754,10 @@ static void balance_dirty_pages(struct address_space *mapping,
 				current->nr_dirtied = 0;
 			} else if (current->nr_dirtied_pause <= pages_dirtied)
 				current->nr_dirtied_pause += pages_dirtied;
+#ifdef CONFIG_BLK_DEV_THROTTLING
+			task_blkg_dec_writer(blkg);
+			task_blkg_put(blkg);
+#endif
 			break;
 		}
 		if (unlikely(pause > max_pause)) {
@@ -1738,12 +1780,18 @@ pause:
 					  pause,
 					  start_time);
 		__set_current_state(TASK_KILLABLE);
+		atomic_inc(&wb->dirty_sleeping);
 		io_schedule_timeout(pause);
+		atomic_dec(&wb->dirty_sleeping);
 
 		current->dirty_paused_when = now + pause;
 		current->nr_dirtied = 0;
 		current->nr_dirtied_pause = nr_dirtied_pause;
 
+#ifdef CONFIG_BLK_DEV_THROTTLING
+		task_blkg_dec_writer(blkg);
+		task_blkg_put(blkg);
+#endif
 		/*
 		 * This is typically equal to (dirty < thresh) and can also
 		 * keep "1000+ dd on a slow USB stick" under control.
@@ -1977,11 +2025,11 @@ void laptop_mode_timer_fn(unsigned long data)
 	 * We want to write everything out, not just down to the dirty
 	 * threshold
 	 */
-	if (!bdi_has_dirty_io(&q->backing_dev_info))
+	if (!bdi_has_dirty_io(q->backing_dev_info))
 		return;
 
 	rcu_read_lock();
-	list_for_each_entry_rcu(wb, &q->backing_dev_info.wb_list, bdi_node)
+	list_for_each_entry_rcu(wb, &q->backing_dev_info->wb_list, bdi_node)
 		if (wb_has_dirty_io(wb))
 			wb_start_writeback(wb, nr_pages, true,
 					   WB_REASON_LAPTOP_TIMER);
@@ -2412,6 +2460,9 @@ void account_page_dirtied(struct page *page, struct address_space *mapping,
 			  struct mem_cgroup *memcg)
 {
 	struct inode *inode = mapping->host;
+#ifdef CONFIG_BLK_DEV_THROTTLING
+	struct blkcg_gq *blkg;
+#endif
 
 	trace_writeback_dirty_page(page, mapping);
 
@@ -2421,6 +2472,21 @@ void account_page_dirtied(struct page *page, struct address_space *mapping,
 		inode_attach_wb(inode, page);
 		wb = inode_to_wb(inode);
 
+#ifdef CONFIG_BLK_DEV_THROTTLING
+		if (!mapping->host || !mapping->host->i_sb ||
+		    !mapping->host->i_sb->s_bdev)
+			goto skip;
+
+		rcu_read_lock();
+		blkg = task_blkcg_gq(current, mapping->host->i_sb->s_bdev);
+		if (blkg)
+			/*lint -save -e732 -e737 -e747*/
+			__percpu_counter_add(&blkg->nr_dirtied, 1, WB_STAT_BATCH);
+			/*lint -restore*/
+		rcu_read_unlock();
+skip:
+#endif
+
 		mem_cgroup_inc_page_stat(memcg, MEM_CGROUP_STAT_DIRTY);
 		__inc_zone_page_state(page, NR_FILE_DIRTY);
 		__inc_zone_page_state(page, NR_DIRTIED);
@@ -2428,6 +2494,9 @@ void account_page_dirtied(struct page *page, struct address_space *mapping,
 		__inc_wb_stat(wb, WB_DIRTIED);
 		task_io_account_write(PAGE_CACHE_SIZE);
 		current->nr_dirtied++;
+		if(is_pagecache_stats_enable()) {
+			stat_inc_dirty_pages_count();
+		}
 		this_cpu_inc(bdp_ratelimits);
 	}
 }
@@ -2446,6 +2515,9 @@ void account_page_cleaned(struct page *page, struct address_space *mapping,
 		dec_zone_page_state(page, NR_FILE_DIRTY);
 		dec_wb_stat(wb, WB_RECLAIMABLE);
 		task_io_account_cancelled_write(PAGE_CACHE_SIZE);
+		if(is_pagecache_stats_enable()) {
+			stat_dec_dirty_pages_count();
+		}
 	}
 }
 

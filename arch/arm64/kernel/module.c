@@ -29,16 +29,30 @@
 #include <asm/alternative.h>
 #include <asm/insn.h>
 #include <asm/sections.h>
-
-#define	AARCH64_INSN_IMM_MOVNZ		AARCH64_INSN_IMM_MAX
-#define	AARCH64_INSN_IMM_MOVK		AARCH64_INSN_IMM_16
+#include <asm/livepatch-hhee.h>
 
 void *module_alloc(unsigned long size)
 {
 	void *p;
 
-	p = __vmalloc_node_range(size, MODULE_ALIGN, MODULES_VADDR, MODULES_END,
+	p = __vmalloc_node_range(size, MODULE_ALIGN, module_alloc_base,
+				module_alloc_base + MODULES_VSIZE,
 				GFP_KERNEL, PAGE_KERNEL_EXEC, 0,
+				NUMA_NO_NODE, __builtin_return_address(0));
+
+	if (!p && IS_ENABLED(CONFIG_ARM64_MODULE_PLTS) &&
+	    !IS_ENABLED(CONFIG_KASAN))
+		/*
+		 * KASAN can only deal with module allocations being served
+		 * from the reserved module region, since the remainder of
+		 * the vmalloc region is already backed by zero shadow pages,
+		 * and punching holes into it is non-trivial. Since the module
+		 * region is not randomized when KASAN is enabled, it is even
+		 * less likely that the module region gets exhausted, so we
+		 * can simply omit this fallback in that case.
+		 */
+		p = __vmalloc_node_range(size, MODULE_ALIGN, VMALLOC_START,
+				VMALLOC_END, GFP_KERNEL, PAGE_KERNEL_EXEC, 0,
 				NUMA_NO_NODE, __builtin_return_address(0));
 
 	if (p && (kasan_module_alloc(p, size) < 0)) {
@@ -73,53 +87,87 @@ static u64 do_reloc(enum aarch64_reloc_op reloc_op, void *place, u64 val)
 	return 0;
 }
 
-static int reloc_data(enum aarch64_reloc_op op, void *place, u64 val, int len)
+static int reloc_data(enum aarch64_reloc_op op, void *place, u64 val, int len,
+				enum aarch64_reloc_stage reloc_stage)
 {
-	u64 imm_mask = (1 << len) - 1;
 	s64 sval = do_reloc(op, place, val);
 
 	switch (len) {
 	case 16:
-		*(s16 *)place = sval;
+		if (reloc_stage == RELOC_MODULE_LOADED && is_hkip_enabled())
+			apply_reloc_hkip(place, 2, sval, hkip_token);
+		else
+			*(s16 *)place = sval;
+		if (sval < S16_MIN || sval > U16_MAX)
+			return -ERANGE;
 		break;
 	case 32:
-		*(s32 *)place = sval;
+		if (reloc_stage == RELOC_MODULE_LOADED && is_hkip_enabled())
+			apply_reloc_hkip(place, 4, sval, hkip_token);
+		else
+			*(s32 *)place = sval;
+		if (sval < S32_MIN || sval > U32_MAX)
+			return -ERANGE;
 		break;
 	case 64:
-		*(s64 *)place = sval;
+		if (reloc_stage == RELOC_MODULE_LOADED && is_hkip_enabled())
+			apply_reloc_hkip(place, 8, sval, hkip_token);
+		else
+			*(s64 *)place = sval;
 		break;
 	default:
 		pr_err("Invalid length (%d) for data relocation\n", len);
 		return 0;
 	}
-
-	/*
-	 * Extract the upper value bits (including the sign bit) and
-	 * shift them to bit 0.
-	 */
-	sval = (s64)(sval & ~(imm_mask >> 1)) >> (len - 1);
-
-	/*
-	 * Overflow has occurred if the value is not representable in
-	 * len bits (i.e the bottom len bits are not sign-extended and
-	 * the top bits are not all zero).
-	 */
-	if ((u64)(sval + 1) > 2)
-		return -ERANGE;
-
 	return 0;
 }
 
-static int reloc_insn_movw(enum aarch64_reloc_op op, void *place, u64 val,
-			   int lsb, enum aarch64_insn_imm_type imm_type)
+static int reloc_data_loaded(struct module *me, enum aarch64_reloc_op op,
+				void *place, u64 val, int len)
 {
-	u64 imm, limit = 0;
+	int ret, numpages, size = 4;
+	bool readonly;
+	unsigned long core = (unsigned long)me->module_core;
+	unsigned long core_size = me->core_size;
+	unsigned long loc = (unsigned long)place;
+
+	if (loc < core || loc >= core + core_size)
+		return -EINVAL;
+
+	readonly = false;
+#ifdef CONFIG_DEBUG_SET_MODULE_RONX
+	if(!is_hkip_enabled())
+		if (loc < core + me->core_ro_size)
+			readonly = true;
+#endif
+
+	numpages = ((loc & PAGE_MASK) == ((loc + size) & PAGE_MASK)) ? 1 : 2;
+
+	if (readonly)
+		set_memory_rw(loc & PAGE_MASK, numpages);
+
+	ret = reloc_data(op, place, val, len, RELOC_MODULE_LOADED);
+
+	if (readonly)
+		set_memory_ro(loc & PAGE_MASK, numpages);
+
+	return ret;
+}
+
+enum aarch64_insn_movw_imm_type {
+	AARCH64_INSN_IMM_MOVNZ,
+	AARCH64_INSN_IMM_MOVKZ,
+};
+
+static int reloc_insn_movw(enum aarch64_reloc_op op, void *place, u64 val,
+			   int lsb, enum aarch64_insn_movw_imm_type imm_type, enum aarch64_reloc_stage reloc_stage)
+{
+	u64 imm;
 	s64 sval;
 	u32 insn = le32_to_cpu(*(u32 *)place);
 
 	sval = do_reloc(op, place, val);
-	sval >>= lsb;
-	imm = sval & 0xffff;
+	imm = sval >> lsb;
 
 	if (imm_type == AARCH64_INSN_IMM_MOVNZ) {
 		/*
@@ -128,7 +176,7 @@ static int reloc_insn_movw(enum aarch64_reloc_op op, void *place, u64 val,
 		 * immediate is less than zero.
 		 */
 		insn &= ~(3 << 29);
-		if ((s64)imm >= 0) {
+		if (sval >= 0) {
 			/* >=0: Set the instruction to MOVZ (opcode 10b). */
 			insn |= 2 << 29;
 		} else {
@@ -140,36 +188,57 @@ static int reloc_insn_movw(enum aarch64_reloc_op op, void *place, u64 val,
 			 */
 			imm = ~imm;
 		}
-		imm_type = AARCH64_INSN_IMM_MOVK;
 	}
 
 	/* Update the instruction with the new encoding. */
-	insn = aarch64_insn_encode_immediate(imm_type, insn, imm);
-	*(u32 *)place = cpu_to_le32(insn);
+	insn = aarch64_insn_encode_immediate(AARCH64_INSN_IMM_16, insn, imm);
+	if (reloc_stage == RELOC_MODULE_LOADED && is_hkip_enabled())
+		apply_reloc_hkip(place, 4, cpu_to_le32(insn), hkip_token);
+	else
+		*(u32 *)place = cpu_to_le32(insn);
 
-	/* Shift out the immediate field. */
-	sval >>= 16;
+	if (reloc_stage == RELOC_MODULE_LOADED)
+		flush_icache_range((uintptr_t)place,
+				(uintptr_t)place + AARCH64_INSN_SIZE);
 
-	/*
-	 * For unsigned immediates, the overflow check is straightforward.
-	 * For signed immediates, the sign bit is actually the bit past the
-	 * most significant bit of the field.
-	 * The AARCH64_INSN_IMM_16 immediate type is unsigned.
-	 */
-	if (imm_type != AARCH64_INSN_IMM_16) {
-		sval++;
-		limit++;
-	}
-
-	/* Check the upper bits depending on the sign of the immediate. */
-	if ((u64)sval > limit)
+	if (imm > U16_MAX)
 		return -ERANGE;
 
 	return 0;
 }
 
+static int reloc_insn_movw_loaded(struct module *me, enum aarch64_reloc_op op,
+	void *place, u64 val, int lsb, enum aarch64_insn_movw_imm_type imm_type)
+{
+        int ret;
+        bool readonly;
+        unsigned long core = (unsigned long)me->module_core;
+        unsigned long core_size = me->core_size;
+        unsigned long loc = (unsigned long)place;
+
+        if (loc < core || loc >= core + core_size)
+                return -EINVAL;
+
+        readonly = false;
+#ifdef CONFIG_DEBUG_SET_MODULE_RONX
+	if(!is_hkip_enabled())
+		if (loc < core + me->core_ro_size)
+			readonly = true;
+#endif
+
+        if (readonly)
+                set_memory_rw(loc & PAGE_MASK, 1);
+
+        ret = reloc_insn_movw(op, place, val, lsb, imm_type, RELOC_MODULE_LOADED);
+
+        if (readonly)
+                set_memory_ro(loc & PAGE_MASK, 1);
+
+        return ret;
+}
+
 static int reloc_insn_imm(enum aarch64_reloc_op op, void *place, u64 val,
-			  int lsb, int len, enum aarch64_insn_imm_type imm_type)
+			  int lsb, int len, enum aarch64_insn_imm_type imm_type, enum aarch64_reloc_stage reloc_stage)
 {
 	u64 imm, imm_mask;
 	s64 sval;
@@ -185,7 +254,14 @@ static int reloc_insn_imm(enum aarch64_reloc_op op, void *place, u64 val,
 
 	/* Update the instruction's immediate field. */
 	insn = aarch64_insn_encode_immediate(imm_type, insn, imm);
-	*(u32 *)place = cpu_to_le32(insn);
+	if (reloc_stage == RELOC_MODULE_LOADED && is_hkip_enabled())
+		apply_reloc_hkip(place, 4, cpu_to_le32(insn),hkip_token);
+	else
+		*(u32 *)place = cpu_to_le32(insn);
+
+	if (reloc_stage == RELOC_MODULE_LOADED)
+		flush_icache_range((uintptr_t)place,
+				(uintptr_t)place + AARCH64_INSN_SIZE);
 
 	/*
 	 * Extract the upper value bits (including the sign bit) and
@@ -201,6 +277,36 @@ static int reloc_insn_imm(enum aarch64_reloc_op op, void *place, u64 val,
 		return -ERANGE;
 
 	return 0;
+}
+
+static int reloc_insn_imm_loaded(struct module *me, enum aarch64_reloc_op op,
+		void *place, u64 val, int lsb, int len, enum aarch64_insn_imm_type imm_type)
+{
+	int ret;
+	bool readonly;
+	unsigned long core = (unsigned long)me->module_core;
+	unsigned long core_size = me->core_size;
+	unsigned long loc = (unsigned long)place;
+
+	if (loc < core || loc >= core + core_size)
+		return -EINVAL;
+
+	readonly = false;
+#ifdef CONFIG_DEBUG_SET_MODULE_RONX
+	if(!is_hkip_enabled())
+		if (loc < core + me->core_ro_size)
+			readonly = true;
+#endif
+
+	if (readonly)
+		set_memory_rw(loc & PAGE_MASK, 1);
+
+	ret = reloc_insn_imm(op, place, val, lsb, len, imm_type, RELOC_MODULE_LOADED);
+
+	if (readonly)
+		set_memory_ro(loc & PAGE_MASK, 1);
+
+	return ret;
 }
 
 int apply_relocate_add(Elf64_Shdr *sechdrs,
@@ -243,23 +349,23 @@ int apply_relocate_add(Elf64_Shdr *sechdrs,
 		/* Data relocations. */
 		case R_AARCH64_ABS64:
 			overflow_check = false;
-			ovf = reloc_data(RELOC_OP_ABS, loc, val, 64);
+			ovf = reloc_data(RELOC_OP_ABS, loc, val, 64, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_ABS32:
-			ovf = reloc_data(RELOC_OP_ABS, loc, val, 32);
+			ovf = reloc_data(RELOC_OP_ABS, loc, val, 32, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_ABS16:
-			ovf = reloc_data(RELOC_OP_ABS, loc, val, 16);
+			ovf = reloc_data(RELOC_OP_ABS, loc, val, 16, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_PREL64:
 			overflow_check = false;
-			ovf = reloc_data(RELOC_OP_PREL, loc, val, 64);
+			ovf = reloc_data(RELOC_OP_PREL, loc, val, 64, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_PREL32:
-			ovf = reloc_data(RELOC_OP_PREL, loc, val, 32);
+			ovf = reloc_data(RELOC_OP_PREL, loc, val, 32, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_PREL16:
-			ovf = reloc_data(RELOC_OP_PREL, loc, val, 16);
+			ovf = reloc_data(RELOC_OP_PREL, loc, val, 16, RELOC_MODULE_LOADING);
 			break;
 
 		/* MOVW instruction relocations. */
@@ -267,127 +373,134 @@ int apply_relocate_add(Elf64_Shdr *sechdrs,
 			overflow_check = false;
 		case R_AARCH64_MOVW_UABS_G0:
 			ovf = reloc_insn_movw(RELOC_OP_ABS, loc, val, 0,
-					      AARCH64_INSN_IMM_16);
+					      AARCH64_INSN_IMM_MOVKZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_UABS_G1_NC:
 			overflow_check = false;
 		case R_AARCH64_MOVW_UABS_G1:
 			ovf = reloc_insn_movw(RELOC_OP_ABS, loc, val, 16,
-					      AARCH64_INSN_IMM_16);
+					      AARCH64_INSN_IMM_MOVKZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_UABS_G2_NC:
 			overflow_check = false;
 		case R_AARCH64_MOVW_UABS_G2:
 			ovf = reloc_insn_movw(RELOC_OP_ABS, loc, val, 32,
-					      AARCH64_INSN_IMM_16);
+					      AARCH64_INSN_IMM_MOVKZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_UABS_G3:
 			/* We're using the top bits so we can't overflow. */
 			overflow_check = false;
 			ovf = reloc_insn_movw(RELOC_OP_ABS, loc, val, 48,
-					      AARCH64_INSN_IMM_16);
+					      AARCH64_INSN_IMM_MOVKZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_SABS_G0:
 			ovf = reloc_insn_movw(RELOC_OP_ABS, loc, val, 0,
-					      AARCH64_INSN_IMM_MOVNZ);
+					      AARCH64_INSN_IMM_MOVNZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_SABS_G1:
 			ovf = reloc_insn_movw(RELOC_OP_ABS, loc, val, 16,
-					      AARCH64_INSN_IMM_MOVNZ);
+					      AARCH64_INSN_IMM_MOVNZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_SABS_G2:
 			ovf = reloc_insn_movw(RELOC_OP_ABS, loc, val, 32,
-					      AARCH64_INSN_IMM_MOVNZ);
+					      AARCH64_INSN_IMM_MOVNZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_PREL_G0_NC:
 			overflow_check = false;
 			ovf = reloc_insn_movw(RELOC_OP_PREL, loc, val, 0,
-					      AARCH64_INSN_IMM_MOVK);
+					      AARCH64_INSN_IMM_MOVKZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_PREL_G0:
 			ovf = reloc_insn_movw(RELOC_OP_PREL, loc, val, 0,
-					      AARCH64_INSN_IMM_MOVNZ);
+					      AARCH64_INSN_IMM_MOVNZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_PREL_G1_NC:
 			overflow_check = false;
 			ovf = reloc_insn_movw(RELOC_OP_PREL, loc, val, 16,
-					      AARCH64_INSN_IMM_MOVK);
+					      AARCH64_INSN_IMM_MOVKZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_PREL_G1:
 			ovf = reloc_insn_movw(RELOC_OP_PREL, loc, val, 16,
-					      AARCH64_INSN_IMM_MOVNZ);
+					      AARCH64_INSN_IMM_MOVNZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_PREL_G2_NC:
 			overflow_check = false;
 			ovf = reloc_insn_movw(RELOC_OP_PREL, loc, val, 32,
-					      AARCH64_INSN_IMM_MOVK);
+					      AARCH64_INSN_IMM_MOVKZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_PREL_G2:
 			ovf = reloc_insn_movw(RELOC_OP_PREL, loc, val, 32,
-					      AARCH64_INSN_IMM_MOVNZ);
+					      AARCH64_INSN_IMM_MOVNZ, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_MOVW_PREL_G3:
 			/* We're using the top bits so we can't overflow. */
 			overflow_check = false;
 			ovf = reloc_insn_movw(RELOC_OP_PREL, loc, val, 48,
-					      AARCH64_INSN_IMM_MOVNZ);
+					      AARCH64_INSN_IMM_MOVNZ, RELOC_MODULE_LOADING);
 			break;
 
 		/* Immediate instruction relocations. */
 		case R_AARCH64_LD_PREL_LO19:
 			ovf = reloc_insn_imm(RELOC_OP_PREL, loc, val, 2, 19,
-					     AARCH64_INSN_IMM_19);
+					     AARCH64_INSN_IMM_19, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_ADR_PREL_LO21:
 			ovf = reloc_insn_imm(RELOC_OP_PREL, loc, val, 0, 21,
-					     AARCH64_INSN_IMM_ADR);
+					     AARCH64_INSN_IMM_ADR, RELOC_MODULE_LOADING);
 			break;
 #ifndef CONFIG_ARM64_ERRATUM_843419
 		case R_AARCH64_ADR_PREL_PG_HI21_NC:
 			overflow_check = false;
 		case R_AARCH64_ADR_PREL_PG_HI21:
 			ovf = reloc_insn_imm(RELOC_OP_PAGE, loc, val, 12, 21,
-					     AARCH64_INSN_IMM_ADR);
+					     AARCH64_INSN_IMM_ADR, RELOC_MODULE_LOADING);
 			break;
 #endif
 		case R_AARCH64_ADD_ABS_LO12_NC:
 		case R_AARCH64_LDST8_ABS_LO12_NC:
 			overflow_check = false;
 			ovf = reloc_insn_imm(RELOC_OP_ABS, loc, val, 0, 12,
-					     AARCH64_INSN_IMM_12);
+					     AARCH64_INSN_IMM_12, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_LDST16_ABS_LO12_NC:
 			overflow_check = false;
 			ovf = reloc_insn_imm(RELOC_OP_ABS, loc, val, 1, 11,
-					     AARCH64_INSN_IMM_12);
+					     AARCH64_INSN_IMM_12, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_LDST32_ABS_LO12_NC:
 			overflow_check = false;
 			ovf = reloc_insn_imm(RELOC_OP_ABS, loc, val, 2, 10,
-					     AARCH64_INSN_IMM_12);
+					     AARCH64_INSN_IMM_12, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_LDST64_ABS_LO12_NC:
 			overflow_check = false;
 			ovf = reloc_insn_imm(RELOC_OP_ABS, loc, val, 3, 9,
-					     AARCH64_INSN_IMM_12);
+					     AARCH64_INSN_IMM_12, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_LDST128_ABS_LO12_NC:
 			overflow_check = false;
 			ovf = reloc_insn_imm(RELOC_OP_ABS, loc, val, 4, 8,
-					     AARCH64_INSN_IMM_12);
+					     AARCH64_INSN_IMM_12, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_TSTBR14:
 			ovf = reloc_insn_imm(RELOC_OP_PREL, loc, val, 2, 14,
-					     AARCH64_INSN_IMM_14);
+					     AARCH64_INSN_IMM_14, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_CONDBR19:
 			ovf = reloc_insn_imm(RELOC_OP_PREL, loc, val, 2, 19,
-					     AARCH64_INSN_IMM_19);
+					     AARCH64_INSN_IMM_19, RELOC_MODULE_LOADING);
 			break;
 		case R_AARCH64_JUMP26:
 		case R_AARCH64_CALL26:
 			ovf = reloc_insn_imm(RELOC_OP_PREL, loc, val, 2, 26,
-					     AARCH64_INSN_IMM_26);
+					     AARCH64_INSN_IMM_26, RELOC_MODULE_LOADING);
+
+			if (IS_ENABLED(CONFIG_ARM64_MODULE_PLTS) &&
+			    ovf == -ERANGE) {
+				val = module_emit_plt_entry(me, loc, &rel[i], sym);
+				ovf = reloc_insn_imm(RELOC_OP_PREL, loc, val, 2,
+						     26, AARCH64_INSN_IMM_26, RELOC_MODULE_LOADING);
+			}
 			break;
 
 		default:
@@ -421,6 +534,184 @@ int module_finalize(const Elf_Ehdr *hdr,
 			apply_alternatives((void *)s->sh_addr, s->sh_size);
 			return 0;
 		}
+	}
+
+	return 0;
+}
+
+int static_relocate(struct module *me, unsigned long type, void *loc,
+		    unsigned long val)
+{
+	int ovf = 0;
+	bool overflow_check = true;
+	/* Perform the static relocation. */
+	switch (type) {
+		/* Null relocations. */
+		case R_ARM_NONE:
+		case R_AARCH64_NONE:
+			ovf = 0;
+			break;
+
+		/* Data relocations. */
+		case R_AARCH64_ABS64:
+			overflow_check = false;
+			ovf = reloc_data_loaded(me, RELOC_OP_ABS, loc, val, 64);
+			break;
+		case R_AARCH64_ABS32:
+			ovf = reloc_data_loaded(me, RELOC_OP_ABS, loc, val, 32);
+			break;
+		case R_AARCH64_ABS16:
+			ovf = reloc_data_loaded(me, RELOC_OP_ABS, loc, val, 16);
+			break;
+		case R_AARCH64_PREL64:
+			overflow_check = false;
+			ovf = reloc_data_loaded(me, RELOC_OP_PREL, loc, val, 64);
+			break;
+		case R_AARCH64_PREL32:
+			ovf = reloc_data_loaded(me, RELOC_OP_PREL, loc, val, 32);
+			break;
+		case R_AARCH64_PREL16:
+			ovf = reloc_data_loaded(me, RELOC_OP_PREL, loc, val, 16);
+			break;
+
+		/* MOVW instruction relocations. */
+		case R_AARCH64_MOVW_UABS_G0_NC:
+			overflow_check = false;
+		case R_AARCH64_MOVW_UABS_G0:
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_ABS, loc, val, 0,
+				      AARCH64_INSN_IMM_MOVKZ);
+			break;
+		case R_AARCH64_MOVW_UABS_G1_NC:
+			overflow_check = false;
+		case R_AARCH64_MOVW_UABS_G1:
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_ABS, loc, val, 16,
+				      AARCH64_INSN_IMM_MOVKZ);
+			break;
+		case R_AARCH64_MOVW_UABS_G2_NC:
+			overflow_check = false;
+		case R_AARCH64_MOVW_UABS_G2:
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_ABS, loc, val, 32,
+				      AARCH64_INSN_IMM_MOVKZ);
+			break;
+		case R_AARCH64_MOVW_UABS_G3:
+			/* We're using the top bits so we can't overflow. */
+			overflow_check = false;
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_ABS, loc, val, 48,
+				      AARCH64_INSN_IMM_MOVKZ);
+			break;
+		case R_AARCH64_MOVW_SABS_G0:
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_ABS, loc, val, 0,
+				      AARCH64_INSN_IMM_MOVNZ);
+			break;
+		case R_AARCH64_MOVW_SABS_G1:
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_ABS, loc, val, 16,
+				      AARCH64_INSN_IMM_MOVNZ);
+			break;
+		case R_AARCH64_MOVW_SABS_G2:
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_ABS, loc, val, 32,
+				      AARCH64_INSN_IMM_MOVNZ);
+			break;
+		case R_AARCH64_MOVW_PREL_G0_NC:
+			overflow_check = false;
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_PREL, loc, val, 0,
+				      AARCH64_INSN_IMM_MOVKZ);
+			break;
+		case R_AARCH64_MOVW_PREL_G0:
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_PREL, loc, val, 0,
+				      AARCH64_INSN_IMM_MOVNZ);
+			break;
+		case R_AARCH64_MOVW_PREL_G1_NC:
+			overflow_check = false;
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_PREL, loc, val, 16,
+				      AARCH64_INSN_IMM_MOVKZ);
+			break;
+		case R_AARCH64_MOVW_PREL_G1:
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_PREL, loc, val, 16,
+				      AARCH64_INSN_IMM_MOVNZ);
+			break;
+		case R_AARCH64_MOVW_PREL_G2_NC:
+			overflow_check = false;
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_PREL, loc, val, 32,
+				      AARCH64_INSN_IMM_MOVKZ);
+			break;
+		case R_AARCH64_MOVW_PREL_G2:
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_PREL, loc, val, 32,
+				      AARCH64_INSN_IMM_MOVNZ);
+			break;
+		case R_AARCH64_MOVW_PREL_G3:
+			/* We're using the top bits so we can't overflow. */
+			overflow_check = false;
+			ovf = reloc_insn_movw_loaded(me, RELOC_OP_PREL, loc, val, 48,
+				      AARCH64_INSN_IMM_MOVNZ);
+			break;
+
+		/* Immediate instruction relocations. */
+		case R_AARCH64_LD_PREL_LO19:
+			ovf = reloc_insn_imm_loaded(me, RELOC_OP_PREL, loc, val, 2, 19,
+				     AARCH64_INSN_IMM_19);
+			break;
+		case R_AARCH64_ADR_PREL_LO21:
+			ovf = reloc_insn_imm_loaded(me, RELOC_OP_PREL, loc, val, 0, 21,
+				     AARCH64_INSN_IMM_ADR);
+			break;
+#ifndef CONFIG_ARM64_ERRATUM_843419
+		case R_AARCH64_ADR_PREL_PG_HI21_NC:
+			overflow_check = false;
+		case R_AARCH64_ADR_PREL_PG_HI21:
+			ovf = reloc_insn_imm_loaded(me, RELOC_OP_PAGE, loc, val, 12, 21,
+				     AARCH64_INSN_IMM_ADR);
+			break;
+#endif
+		case R_AARCH64_ADD_ABS_LO12_NC:
+		case R_AARCH64_LDST8_ABS_LO12_NC:
+			overflow_check = false;
+			ovf = reloc_insn_imm_loaded(me, RELOC_OP_ABS, loc, val, 0, 12,
+				     AARCH64_INSN_IMM_12);
+			break;
+		case R_AARCH64_LDST16_ABS_LO12_NC:
+			overflow_check = false;
+			ovf = reloc_insn_imm_loaded(me, RELOC_OP_ABS, loc, val, 1, 11,
+				     AARCH64_INSN_IMM_12);
+			break;
+		case R_AARCH64_LDST32_ABS_LO12_NC:
+			overflow_check = false;
+			ovf = reloc_insn_imm_loaded(me, RELOC_OP_ABS, loc, val, 2, 10,
+				     AARCH64_INSN_IMM_12);
+			break;
+		case R_AARCH64_LDST64_ABS_LO12_NC:
+			overflow_check = false;
+			ovf = reloc_insn_imm_loaded(me, RELOC_OP_ABS, loc, val, 3, 9,
+				     AARCH64_INSN_IMM_12);
+			break;
+		case R_AARCH64_LDST128_ABS_LO12_NC:
+			overflow_check = false;
+			ovf = reloc_insn_imm_loaded(me, RELOC_OP_ABS, loc, val, 4, 8,
+				     AARCH64_INSN_IMM_12);
+			break;
+		case R_AARCH64_TSTBR14:
+			ovf = reloc_insn_imm_loaded(me, RELOC_OP_PREL, loc, val, 2, 14,
+				     AARCH64_INSN_IMM_14);
+			break;
+		case R_AARCH64_CONDBR19:
+			ovf = reloc_insn_imm_loaded(me, RELOC_OP_PREL, loc, val, 2, 19,
+				     AARCH64_INSN_IMM_19);
+			break;
+		case R_AARCH64_JUMP26:
+		case R_AARCH64_CALL26:
+			ovf = reloc_insn_imm_loaded(me, RELOC_OP_PREL, loc, val, 2, 26,
+				     AARCH64_INSN_IMM_26);
+			break;
+
+	default:
+		pr_err("module %s: unsupported RELA relocation: %lu\n",
+			me->name, type);
+		return -ENOEXEC;
+	}
+
+	if (overflow_check && ovf == -ERANGE) {
+		pr_err("module %s: overflow in relocation type %lu val %lx\n",
+			me->name, type, val);
+		return -ENOEXEC;
 	}
 
 	return 0;

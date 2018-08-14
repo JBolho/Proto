@@ -56,6 +56,7 @@ parameter is applicable:
 	BLACKFIN Blackfin architecture is enabled.
 	CLK	Common clock infrastructure is enabled.
 	CMA	Contiguous Memory Area support is enabled.
+	DM	Device mapper support is enabled.
 	DRM	Direct Rendering Management support is enabled.
 	DYNAMIC_DEBUG Build in debug messages and enable them at runtime
 	EDD	BIOS Enhanced Disk Drive Services (EDD) is enabled
@@ -914,6 +915,11 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			Can be useful to work around chipset bugs.
 
 	dis_ucode_ldr	[X86] Disable the microcode loader.
+
+	dm=		[DM] Allows early creation of a device-mapper device.
+			See Documentation/device-mapper/boot.txt.
+
+	dmasound=	[HW,OSS] Sound subsystem buff
 
 	dma_debug=off	If the kernel is compiled with DMA_API_DEBUG support,
 			this option disables the debugging code at boot.
@@ -3409,6 +3415,10 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 
 	ro		[KNL] Mount root device read-only on boot
 
+	rodata=		[KNL]
+		on	Mark read-only kernel memory as read-only (default).
+		off	Leave read-only kernel memory writable for debugging.
+
 	root=		[KNL] Root filesystem
 			See name_to_dev_t comment in init/do_mounts.c.
 
@@ -3858,6 +3868,24 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 
 	unknown_nmi_panic
 			[X86] Cause panic on unknown NMI.
+
+	unmovable_isolate1=size[KMG]
+			[KNL] The size of MIGRATE_UNMOVABLE_ISOLATE1 area.
+			All ddr-size device will set the same "size".
+
+	unmovable_isolate1=ddr_size1:size1[KMG][,ddr_size2:size2[KMG],...]
+			[KNL] Same as above, but depends on the memory
+			in the running system. The cmdline must adhere the syntax:
+			the "ddrsize" and "size" is separated by colons.
+
+	unmovable_isolate2=size[KMG]
+			[KNL] The size of MIGRATE_UNMOVABLE_ISOLATE2 area.
+			All ddr-size device will set the same "size".
+
+	unmovable_isolate2=ddr_size1:size1[KMG][,ddr_size2:size2[KMG],...]
+			[KNL] Same as above, but depends on the memory
+			in the running system. The cmdline must adhere the syntax:
+			the "ddrsize" and "size" is separated by colons.
 
 	usbcore.authorized_default=
 			[USB] Default USB device authorization:

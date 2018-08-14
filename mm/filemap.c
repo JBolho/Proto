@@ -34,7 +34,19 @@
 #include <linux/memcontrol.h>
 #include <linux/cleancache.h>
 #include <linux/rmap.h>
+#include <linux/hisi/page_tracker.h>
+#include <linux/hisi/pagecache_manage.h>
+#include <linux/hisi/pagecache_debug.h>
 #include "internal.h"
+#include <linux/iolimit_cgroup.h>
+
+#ifdef CONFIG_TASK_PROTECT_LRU
+#include <linux/hisi/protect_lru.h>
+#endif
+
+#ifdef CONFIG_HW_MEMORY_MONITOR
+#include <chipset_common/mmonitor/mmonitor.h>
+#endif
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/filemap.h>
@@ -45,6 +57,15 @@
 #include <linux/buffer_head.h> /* for try_to_free_buffers */
 
 #include <asm/mman.h>
+
+#ifdef CONFIG_HUAWEI_IO_TRACING
+#include <trace/iotrace.h>
+DEFINE_TRACE(generic_perform_write_enter);
+DEFINE_TRACE(generic_perform_write_end);
+DEFINE_TRACE(generic_file_read_begin);
+DEFINE_TRACE(generic_file_read_end);
+#endif
+
 
 /*
  * Shared mappings implemented 30.11.1994. It's not fully working yet,
@@ -109,6 +130,48 @@
  *   ->tasklist_lock            (memory_failure, collect_procs_ao)
  */
 
+static int page_cache_tree_insert(struct address_space *mapping,
+				  struct page *page, void **shadowp)
+{
+	struct radix_tree_node *node;
+	void **slot;
+	int error;
+
+	error = __radix_tree_create(&mapping->page_tree, page->index,
+				    &node, &slot);
+	if (error)
+		return error;
+	if (*slot) {
+		void *p;
+
+		p = radix_tree_deref_slot_protected(slot, &mapping->tree_lock);
+		if (!radix_tree_exceptional_entry(p))
+			return -EEXIST;
+		if (shadowp)
+			*shadowp = p;
+		mapping->nrshadows--;
+		if (node)
+			workingset_node_shadows_dec(node);
+	}
+	radix_tree_replace_slot(slot, page);
+	mapping->nrpages++;
+	if (node) {
+		workingset_node_pages_inc(node);
+		/*
+		 * Don't track node that contains actual pages.
+		 *
+		 * Avoid acquiring the list_lru lock if already
+		 * untracked.  The list_empty() test is safe as
+		 * node->private_list is protected by
+		 * mapping->tree_lock.
+		 */
+		if (!list_empty(&node->private_list))
+			list_lru_del(&workingset_shadow_nodes,
+				     &node->private_list);
+	}
+	return 0;
+}
+
 static void page_cache_tree_delete(struct address_space *mapping,
 				   struct page *page, void *shadow)
 {
@@ -121,6 +184,14 @@ static void page_cache_tree_delete(struct address_space *mapping,
 	VM_BUG_ON(!PageLocked(page));
 
 	__radix_tree_lookup(&mapping->page_tree, page->index, &node, &slot);
+
+	if (!node) {
+		/*
+		 * We need a node to properly account shadow
+		 * entries. Don't plant any without. XXX
+		 */
+		shadow = NULL;
+	}
 
 	if (shadow) {
 		mapping->nrshadows++;
@@ -288,6 +359,7 @@ int __filemap_fdatawrite_range(struct address_space *mapping, loff_t start,
 		.nr_to_write = LONG_MAX,
 		.range_start = start,
 		.range_end = end,
+		.reason = WB_REASON_MAX,
 	};
 
 	if (!mapping_cap_writeback_dirty(mapping))
@@ -538,9 +610,8 @@ int replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask)
 		memcg = mem_cgroup_begin_page_stat(old);
 		spin_lock_irqsave(&mapping->tree_lock, flags);
 		__delete_from_page_cache(old, NULL, memcg);
-		error = radix_tree_insert(&mapping->page_tree, offset, new);
+		error = page_cache_tree_insert(mapping, new, NULL);
 		BUG_ON(error);
-		mapping->nrpages++;
 
 		/*
 		 * hugetlb pages do not participate in page cache accounting.
@@ -561,48 +632,6 @@ int replace_page_cache_page(struct page *old, struct page *new, gfp_t gfp_mask)
 	return error;
 }
 EXPORT_SYMBOL_GPL(replace_page_cache_page);
-
-static int page_cache_tree_insert(struct address_space *mapping,
-				  struct page *page, void **shadowp)
-{
-	struct radix_tree_node *node;
-	void **slot;
-	int error;
-
-	error = __radix_tree_create(&mapping->page_tree, page->index,
-				    &node, &slot);
-	if (error)
-		return error;
-	if (*slot) {
-		void *p;
-
-		p = radix_tree_deref_slot_protected(slot, &mapping->tree_lock);
-		if (!radix_tree_exceptional_entry(p))
-			return -EEXIST;
-		if (shadowp)
-			*shadowp = p;
-		mapping->nrshadows--;
-		if (node)
-			workingset_node_shadows_dec(node);
-	}
-	radix_tree_replace_slot(slot, page);
-	mapping->nrpages++;
-	if (node) {
-		workingset_node_pages_inc(node);
-		/*
-		 * Don't track node that contains actual pages.
-		 *
-		 * Avoid acquiring the list_lru lock if already
-		 * untracked.  The list_empty() test is safe as
-		 * node->private_list is protected by
-		 * mapping->tree_lock.
-		 */
-		if (!list_empty(&node->private_list))
-			list_lru_del(&workingset_shadow_nodes,
-				     &node->private_list);
-	}
-	return 0;
-}
 
 static int __add_to_page_cache_locked(struct page *page,
 				      struct address_space *mapping,
@@ -643,6 +672,7 @@ static int __add_to_page_cache_locked(struct page *page,
 	/* hugetlb pages do not participate in page cache accounting. */
 	if (!huge)
 		__inc_zone_page_state(page, NR_FILE_PAGES);
+	page_tracker_set_type(page, TRACK_FILE, 0);
 	spin_unlock_irq(&mapping->tree_lock);
 	if (!huge)
 		mem_cgroup_commit_charge(page, memcg, false);
@@ -698,6 +728,9 @@ int add_to_page_cache_lru(struct page *page, struct address_space *mapping,
 			workingset_activation(page);
 		} else
 			ClearPageActive(page);
+#ifdef CONFIG_TASK_PROTECT_LRU
+		protect_lru_set_from_file(page);
+#endif
 		lru_cache_add(page);
 	}
 	return ret;
@@ -858,9 +891,12 @@ void page_endio(struct page *page, int rw, int err)
 		unlock_page(page);
 	} else { /* rw == WRITE */
 		if (err) {
+			struct address_space *mapping;
+
 			SetPageError(page);
-			if (page->mapping)
-				mapping_set_error(page->mapping, err);
+			mapping = page_mapping(page);
+			if (mapping)
+				mapping_set_error(mapping, err);
 		}
 		end_page_writeback(page);
 	}
@@ -1192,7 +1228,11 @@ no_page:
 		}
 	}
 
+#ifdef CONFIG_TASK_PROTECT_LRU
+	return protect_lru_move_and_shrink(page);
+#else
 	return page;
+#endif
 }
 EXPORT_SYMBOL(pagecache_get_page);
 
@@ -1544,6 +1584,10 @@ static ssize_t do_generic_file_read(struct file *filp, loff_t *ppos,
 	last_index = (*ppos + iter->count + PAGE_CACHE_SIZE-1) >> PAGE_CACHE_SHIFT;
 	offset = *ppos & ~PAGE_CACHE_MASK;
 
+#ifdef CONFIG_HUAWEI_IO_TRACING
+    trace_generic_file_read_begin(filp, iter->count);
+#endif
+
 	for (;;) {
 		struct page *page;
 		pgoff_t end_index;
@@ -1551,9 +1595,40 @@ static ssize_t do_generic_file_read(struct file *filp, loff_t *ppos,
 		unsigned long nr, ret;
 
 		cond_resched();
+#ifdef CONFIG_CGROUP_IOLIMIT
+		io_read_bandwidth_control(PAGE_CACHE_SIZE);
+#endif
 find_page:
+		if (fatal_signal_pending(current)) {
+			error = -EINTR;
+			goto out;
+		}
+
 		page = find_get_page(mapping, index);
+#ifdef CONFIG_HW_MEMORY_MONITOR
+		count_mmonitor_event(FILE_CACHE_READ_COUNT);
+#endif
+		if(is_pagecache_stats_enable()) {
+			if(page) {
+				stat_inc_hit_count();
+			} else {
+				stat_inc_miss_count();
+			}
+		}
 		if (!page) {
+#ifdef CONFIG_HW_MEMORY_MONITOR
+			count_mmonitor_event(FILE_CACHE_MISS_COUNT);
+#endif
+
+#ifdef CONFIG_HISI_PAGECACHE_DEBUG
+			filp->f_path.dentry->mapping_stat.generic_sync_read_times++;
+#endif
+			if(is_pagecache_stats_enable()) {
+				stat_inc_syncread_pages_count(last_index - index);
+			}
+			pgcache_log_path(BIT_GENERIC_SYNC_READ_DUMP, &(filp->f_path),
+					"generic sync read, offset, %ld, size, %ld",
+					*ppos, iter->count);
 			page_cache_sync_readahead(mapping,
 					ra, filp,
 					index, last_index - index);
@@ -1565,8 +1640,13 @@ find_page:
 			page_cache_async_readahead(mapping,
 					ra, filp, page,
 					index, last_index - index);
+			if(is_pagecache_stats_enable()) {
+				stat_inc_asyncread_pages_count(last_index - index);
+			}
 		}
 		if (!PageUptodate(page)) {
+			blk_throtl_get_quota(inode->i_sb->s_bdev, PAGE_SIZE,
+					     msecs_to_jiffies(100), true);
 			if (inode->i_blkbits == PAGE_CACHE_SHIFT ||
 					!mapping->a_ops->is_partially_uptodate)
 				goto page_not_up_to_date;
@@ -1721,6 +1801,8 @@ no_cached_page:
 			error = -ENOMEM;
 			goto out;
 		}
+		blk_throtl_get_quota(inode->i_sb->s_bdev, PAGE_SIZE,
+				     msecs_to_jiffies(100), true);
 		error = add_to_page_cache_lru(page, mapping, index,
 				mapping_gfp_constraint(mapping, GFP_KERNEL));
 		if (error) {
@@ -1735,7 +1817,12 @@ no_cached_page:
 	}
 
 out:
-	ra->prev_pos = prev_index;
+
+#ifdef CONFIG_HUAWEI_IO_TRACING
+    trace_generic_file_read_end(filp, written);
+#endif
+
+    ra->prev_pos = prev_index;
 	ra->prev_pos <<= PAGE_CACHE_SHIFT;
 	ra->prev_pos |= prev_offset;
 
@@ -1759,15 +1846,16 @@ generic_file_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 	ssize_t retval = 0;
 	loff_t *ppos = &iocb->ki_pos;
 	loff_t pos = *ppos;
+	size_t count = iov_iter_count(iter);
+
+	if (!count)
+		goto out; /* skip atime */
 
 	if (iocb->ki_flags & IOCB_DIRECT) {
 		struct address_space *mapping = file->f_mapping;
 		struct inode *inode = mapping->host;
-		size_t count = iov_iter_count(iter);
 		loff_t size;
 
-		if (!count)
-			goto out; /* skip atime */
 		size = i_size_read(inode);
 		retval = filemap_write_and_wait_range(mapping, pos,
 					pos + count - 1);
@@ -1850,13 +1938,31 @@ static void do_sync_mmap_readahead(struct vm_area_struct *vma,
 {
 	struct address_space *mapping = file->f_mapping;
 
+#ifdef CONFIG_HISI_PAGECACHE_DEBUG
+	file->f_path.dentry->mapping_stat.mmap_sync_read_times++;
+#endif
+
 	/* If we don't want any read-ahead, don't bother */
-	if (vma->vm_flags & VM_RAND_READ)
+	if (vma->vm_flags & VM_RAND_READ) {
+		pgcache_log_path(BIT_MMAP_SYNC_READ_DUMP, &(file->f_path),
+				"mmap sync read no need pre-fetch(VM_RAND_READ): pg_offset: %ld",
+				offset);
 		return;
-	if (!ra->ra_pages)
+	}
+	if (!ra->ra_pages) {
+		pgcache_log_path(BIT_MMAP_SYNC_READ_DUMP, &(file->f_path),
+				"mmap sync read no need pre-fetch(ra_pages = 0): pg_offset: %ld",
+				offset);
 		return;
+	}
 
 	if (vma->vm_flags & VM_SEQ_READ) {
+		pgcache_log_path(BIT_MMAP_SYNC_READ_DUMP, &(file->f_path),
+				"mmap sync readahead(VM_SEQ_READ), pg_offset, %ld, ra_pages, %ld",
+				offset, ra->ra_pages);
+		if(is_pagecache_stats_enable()) {
+			stat_inc_mmap_syncread_pages_count(ra->ra_pages);
+		}
 		page_cache_sync_readahead(mapping, ra, file, offset,
 					  ra->ra_pages);
 		return;
@@ -1878,7 +1984,12 @@ static void do_sync_mmap_readahead(struct vm_area_struct *vma,
 	 */
 	ra->start = max_t(long, 0, offset - ra->ra_pages / 2);
 	ra->size = ra->ra_pages;
+	ra->size = pch_shrink_mmap_pages(ra->size);
 	ra->async_size = ra->ra_pages / 4;
+	ra->async_size = pch_shrink_mmap_async_pages(ra->async_size);
+	pgcache_log_path(BIT_MMAP_SYNC_READ_DUMP, &(file->f_path),
+			"mmap sync readaround, pg_offset, %ld, pages, %ld",
+			ra->start, ra->size);
 	ra_submit(ra, mapping, file);
 }
 
@@ -1899,9 +2010,13 @@ static void do_async_mmap_readahead(struct vm_area_struct *vma,
 		return;
 	if (ra->mmap_miss > 0)
 		ra->mmap_miss--;
-	if (PageReadahead(page))
+	if (PageReadahead(page)) {
+		if(is_pagecache_stats_enable()) {
+			stat_inc_mmap_asyncread_pages_count(ra->ra_pages);
+		}
 		page_cache_async_readahead(mapping, ra, file,
 					   page, offset, ra->ra_pages);
+	}
 }
 
 /**
@@ -1944,19 +2059,38 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	if (offset >= size >> PAGE_CACHE_SHIFT)
 		return VM_FAULT_SIGBUS;
 
+	pgcache_log_path(BIT_FILEMAP_FAULT_DUMP, &(file->f_path),
+			"filemap fault pg_offset: %ld size: %ld",
+			offset, size);
 	/*
 	 * Do we have something in the page cache already?
 	 */
 	page = find_get_page(mapping, offset);
+#ifdef CONFIG_HW_MEMORY_MONITOR
+	count_mmonitor_event(FILE_CACHE_MAP_COUNT);
+#endif
 	if (likely(page) && !(vmf->flags & FAULT_FLAG_TRIED)) {
 		/*
 		 * We found the page, so try async readahead before
 		 * waiting for the lock.
 		 */
+		if(is_pagecache_stats_enable()) {
+			stat_inc_mmap_hit_count();
+		}
+		task_set_in_pagefault(current);
 		do_async_mmap_readahead(vma, ra, file, page, offset);
+		task_clear_in_pagefault(current);
 	} else if (!page) {
 		/* No page in the page cache at all */
+		task_set_in_pagefault(current);
 		do_sync_mmap_readahead(vma, ra, file, offset);
+		pch_mmap_readextend(vma, ra, file, offset);
+		task_clear_in_pagefault(current);
+
+		if(is_pagecache_stats_enable()) {
+			stat_inc_mmap_miss_count();
+		}
+
 		count_vm_event(PGMAJFAULT);
 		mem_cgroup_count_vm_event(vma->vm_mm, PGMAJFAULT);
 		ret = VM_FAULT_MAJOR;
@@ -2005,7 +2139,9 @@ no_cached_page:
 	 * We're only likely to ever get here if MADV_RANDOM is in
 	 * effect.
 	 */
+	task_set_in_pagefault(current);
 	error = page_cache_read(file, offset);
+	task_clear_in_pagefault(current);
 
 	/*
 	 * The page we want has now been added to the page cache.
@@ -2032,7 +2168,9 @@ page_not_uptodate:
 	 * and we need to check for errors.
 	 */
 	ClearPageError(page);
+	task_set_in_pagefault(current);
 	error = mapping->a_ops->readpage(file, page);
+	task_clear_in_pagefault(current);
 	if (!error) {
 		wait_on_page_locked(page);
 		if (!PageUptodate(page))
@@ -2506,7 +2644,9 @@ ssize_t generic_perform_write(struct file *file,
 		unsigned long bytes;	/* Bytes to write to page */
 		size_t copied;		/* Bytes copied from user */
 		void *fsdata;
-
+#ifdef CONFIG_CGROUP_IOLIMIT
+		io_write_bandwidth_control(PAGE_CACHE_SIZE);
+#endif
 		offset = (pos & (PAGE_CACHE_SIZE - 1));
 		bytes = min_t(unsigned long, PAGE_CACHE_SIZE - offset,
 						iov_iter_count(i));
@@ -2614,6 +2754,10 @@ ssize_t __generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	if (iocb->ki_flags & IOCB_DIRECT) {
 		loff_t pos, endbyte;
 
+		pgcache_log_path(BIT_GENERIC_WRITE_DUMP, &(file->f_path),
+				"generic write direct, offset, %ld, size, %ld",
+				iocb->ki_pos, iov_iter_count(from));
+
 		written = generic_file_direct_write(iocb, from, iocb->ki_pos);
 		/*
 		 * If the write stopped short of completing, fall back to
@@ -2657,6 +2801,9 @@ ssize_t __generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			 */
 		}
 	} else {
+		pgcache_log_path(BIT_GENERIC_WRITE_DUMP, &(file->f_path),
+				"generic write cache, offset, %ld, size, %ld",
+				iocb->ki_pos, iov_iter_count(from));
 		written = generic_perform_write(file, from, iocb->ki_pos);
 		if (likely(written > 0))
 			iocb->ki_pos += written;

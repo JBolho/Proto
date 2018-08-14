@@ -17,6 +17,7 @@
 #define U_MIDI_H
 
 #include <linux/usb/composite.h>
+#include <linux/wait.h>
 
 struct f_midi_opts {
 	struct usb_function_instance	func_inst;
@@ -34,6 +35,10 @@ struct f_midi_opts {
 	 */
 	 struct mutex			lock;
 	 int				refcnt;
+#ifdef CONFIG_HISI_USB_CONFIGFS
+	 wait_queue_head_t		free_snd_wq;
+	 int				snd_created;
+#endif
 };
 
 #endif /* U_MIDI_H */

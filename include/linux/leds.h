@@ -195,7 +195,10 @@ extern void led_sysfs_enable(struct led_classdev *led_cdev);
  */
 static inline bool led_sysfs_is_disabled(struct led_classdev *led_cdev)
 {
+#pragma GCC diagnostic push	198
+#pragma GCC diagnostic ignored "-Woverflow"
 	return led_cdev->flags & LED_SYSFS_DISABLE;
+#pragma GCC diagnostic pop
 }
 
 /*

@@ -33,6 +33,9 @@
 #include <linux/types.h>
 
 #include "arm_big_little.h"
+#ifdef CONFIG_HISI_IPA_THERMAL
+#include <linux/thermal.h>
+#endif
 
 /* Currently we support only two clusters */
 #define A15_CLUSTER	0
@@ -54,6 +57,23 @@ static bool bL_switching_enabled;
 
 #define ACTUAL_FREQ(cluster, freq)  ((cluster == A7_CLUSTER) ? freq << 1 : freq)
 #define VIRT_FREQ(cluster, freq)    ((cluster == A7_CLUSTER) ? freq >> 1 : freq)
+
+#ifdef CONFIG_ARCH_HISI_MAXFREQ
+extern void of_target_cpu(int cluster, struct device *cpu_dev);
+#endif
+
+#ifdef CONFIG_HISI_BIG_MAXFREQ_HOTPLUG
+extern void set_bL_hifreq_hotplug_switch(unsigned int max_freq);
+extern void bL_hifreq_hotplug_init(void);
+extern void bL_hifreq_hotplug_exit(void);
+extern int bL_hifreq_hotplug_set_target(struct cpufreq_policy *policy,
+		unsigned int cluster, unsigned int freq);
+static unsigned int clk_big_max;	/* Maximum Big clock frequency */
+#endif
+
+#ifdef CONFIG_HISI_CPUFREQ
+static DEFINE_PER_CPU(bool, opp_initialized);
+#endif
 
 static struct cpufreq_arm_bL_ops *arm_bL_ops;
 static struct clk *clk[MAX_CLUSTERS];
@@ -172,7 +192,7 @@ bL_cpufreq_set_rate(u32 cpu, u32 old_cluster, u32 new_cluster, u32 rate)
 
 		mutex_unlock(&cluster_lock[new_cluster]);
 
-		return ret;
+		return ret; /* [false alarm]:fortify */
 	}
 
 	mutex_unlock(&cluster_lock[new_cluster]);
@@ -205,6 +225,15 @@ bL_cpufreq_set_rate(u32 cpu, u32 old_cluster, u32 new_cluster, u32 rate)
 	return 0;
 }
 
+
+#ifdef CONFIG_HISI_BIG_MAXFREQ_HOTPLUG
+int bL_hifreq_hotplug_set_rate(u32 cpu, u32 old_cluster, u32 new_cluster, u32 rate)
+{
+	return (int)bL_cpufreq_set_rate(cpu, old_cluster, new_cluster, rate);
+}
+EXPORT_SYMBOL_GPL(bL_hifreq_hotplug_set_rate);
+#endif
+
 /* Set clock frequency */
 static int bL_cpufreq_set_target(struct cpufreq_policy *policy,
 		unsigned int index)
@@ -217,6 +246,10 @@ static int bL_cpufreq_set_target(struct cpufreq_policy *policy,
 
 	freqs_new = freq_table[cur_cluster][index].frequency;
 
+#ifdef CONFIG_HISI_IPA_THERMAL
+	freqs_new = ipa_freq_limit(cur_cluster, freqs_new);
+#endif
+
 	if (is_bL_switching_enabled()) {
 		if ((actual_cluster == A15_CLUSTER) &&
 				(freqs_new < clk_big_min)) {
@@ -227,7 +260,11 @@ static int bL_cpufreq_set_target(struct cpufreq_policy *policy,
 		}
 	}
 
+#ifdef CONFIG_HISI_BIG_MAXFREQ_HOTPLUG
+	return bL_hifreq_hotplug_set_target(policy, new_cluster, freqs_new);
+#else
 	return bL_cpufreq_set_rate(cpu, actual_cluster, new_cluster, freqs_new);
+#endif
 }
 
 static inline u32 get_table_count(struct cpufreq_frequency_table *table)
@@ -237,7 +274,7 @@ static inline u32 get_table_count(struct cpufreq_frequency_table *table)
 	for (count = 0; table[count].frequency != CPUFREQ_TABLE_END; count++)
 		;
 
-	return count;
+	return count; /* [false alarm]:fortify */
 }
 
 /* get the minimum frequency in the cpufreq_frequency_table */
@@ -305,8 +342,14 @@ static void _put_cluster_clk_and_freq_table(struct device *cpu_dev)
 
 	clk_put(clk[cluster]);
 	dev_pm_opp_free_cpufreq_table(cpu_dev, &freq_table[cluster]);
+
 	if (arm_bL_ops->free_opp_table)
 		arm_bL_ops->free_opp_table(cpu_dev);
+
+#ifdef CONFIG_HISI_CPUFREQ
+	per_cpu(opp_initialized, cpu_dev->id) = false;
+#endif
+
 	dev_dbg(cpu_dev, "%s: cluster: %d\n", __func__, cluster);
 }
 
@@ -343,12 +386,29 @@ static int _get_cluster_clk_and_freq_table(struct device *cpu_dev)
 	if (freq_table[cluster])
 		return 0;
 
+	/* just do it when boot up and first core of each cluster come online */
+#ifdef CONFIG_HISI_CPUFREQ
+	if (!per_cpu(opp_initialized, cpu_dev->id)) {
+		ret = arm_bL_ops->init_opp_table(cpu_dev);
+		if (ret) {
+			dev_err(cpu_dev, "%s: init_opp_table failed, cpu: %d, err: %d\n",
+					__func__, cpu_dev->id, ret);
+			goto out;
+		}
+		per_cpu(opp_initialized, cpu_dev->id) = true;
+	}
+#else
 	ret = arm_bL_ops->init_opp_table(cpu_dev);
 	if (ret) {
 		dev_err(cpu_dev, "%s: init_opp_table failed, cpu: %d, err: %d\n",
 				__func__, cpu_dev->id, ret);
 		goto out;
 	}
+#endif
+
+#ifdef CONFIG_ARCH_HISI_MAXFREQ
+	of_target_cpu(cluster, cpu_dev);
+#endif
 
 	ret = dev_pm_opp_init_cpufreq_table(cpu_dev, &freq_table[cluster]);
 	if (ret) {
@@ -356,6 +416,16 @@ static int _get_cluster_clk_and_freq_table(struct device *cpu_dev)
 				__func__, cpu_dev->id, ret);
 		goto free_opp_table;
 	}
+
+#ifdef CONFIG_HISI_BIG_MAXFREQ_HOTPLUG
+	/* only max freq of big cluster higher than THRESHOLD_FREQ
+	 * support hifreq hotplug
+	 */
+	if (cluster == A7_CLUSTER) {
+		clk_big_max = get_table_max(freq_table[cluster]);
+		set_bL_hifreq_hotplug_switch(clk_big_max);
+	}
+#endif
 
 	clk[cluster] = clk_get(cpu_dev, NULL);
 	if (!IS_ERR(clk[cluster])) {
@@ -416,8 +486,9 @@ static int get_cluster_clk_and_freq_table(struct device *cpu_dev)
 
 	/* Assuming 2 cluster, set clk_big_min and clk_little_max */
 	clk_big_min = get_table_min(freq_table[0]);
+	/*lint -e666*/
 	clk_little_max = VIRT_FREQ(1, get_table_max(freq_table[1]));
-
+	/*lint +e666*/
 	pr_debug("%s: cluster: %d, clk_big_min: %d, clk_little_max: %d\n",
 			__func__, cluster, clk_big_min, clk_little_max);
 
@@ -510,6 +581,9 @@ static int bL_cpufreq_exit(struct cpufreq_policy *policy)
 static struct cpufreq_driver bL_cpufreq_driver = {
 	.name			= "arm-big-little",
 	.flags			= CPUFREQ_STICKY |
+#ifdef CONFIG_HISI_BIG_MAXFREQ_HOTPLUG
+					CPUFREQ_ASYNC_NOTIFICATION |
+#endif
 					CPUFREQ_HAVE_GOVERNOR_PER_POLICY |
 					CPUFREQ_NEED_INITIAL_FREQ_CHECK,
 	.verify			= cpufreq_generic_frequency_table_verify,
@@ -589,6 +663,12 @@ int bL_cpufreq_register(struct cpufreq_arm_bL_ops *ops)
 	for (i = 0; i < MAX_CLUSTERS; i++)
 		mutex_init(&cluster_lock[i]);
 
+	/* initialize before register driver */
+#ifdef CONFIG_HISI_CPUFREQ
+	for_each_possible_cpu(i)
+		per_cpu(opp_initialized, i) = false;
+#endif
+
 	ret = cpufreq_register_driver(&bL_cpufreq_driver);
 	if (ret) {
 		pr_info("%s: Failed registering platform driver: %s, err: %d\n",
@@ -600,6 +680,9 @@ int bL_cpufreq_register(struct cpufreq_arm_bL_ops *ops)
 			cpufreq_unregister_driver(&bL_cpufreq_driver);
 			arm_bL_ops = NULL;
 		} else {
+#ifdef CONFIG_HISI_BIG_MAXFREQ_HOTPLUG
+			bL_hifreq_hotplug_init();
+#endif
 			pr_info("%s: Registered platform driver: %s\n",
 					__func__, ops->name);
 		}
@@ -621,6 +704,9 @@ void bL_cpufreq_unregister(struct cpufreq_arm_bL_ops *ops)
 	bL_switcher_get_enabled();
 	__bLs_unregister_notifier();
 	cpufreq_unregister_driver(&bL_cpufreq_driver);
+#ifdef CONFIG_HISI_BIG_MAXFREQ_HOTPLUG
+	bL_hifreq_hotplug_exit();
+#endif
 	bL_switcher_put_enabled();
 	pr_info("%s: Un-registered platform driver: %s\n", __func__,
 			arm_bL_ops->name);

@@ -27,6 +27,10 @@
 #include <linux/tick.h>
 #include <linux/irq.h>
 
+#ifdef CONFIG_HISI_BB
+#include <linux/hisi/rdr_hisi_ap_hook.h>
+#endif
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/irq.h>
 
@@ -502,7 +506,13 @@ static void tasklet_action(struct softirq_action *a)
 				if (!test_and_clear_bit(TASKLET_STATE_SCHED,
 							&t->state))
 					BUG();
+#ifdef CONFIG_HISI_BB
+				tasklet_hook((u64)(t->func), 0);
+#endif
 				t->func(t->data);
+#ifdef CONFIG_HISI_BB
+				tasklet_hook((u64)(t->func), 1);
+#endif
 				tasklet_unlock(t);
 				continue;
 			}

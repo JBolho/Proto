@@ -219,13 +219,13 @@ find_table(struct device *dev, struct elf32_hdr *ehdr, size_t fw_size)
 
 	/* look for the resource table and handle it */
 	shdr = (struct elf32_shdr *)(elf_data + ehdr->e_shoff);
-	name_table = elf_data + shdr[ehdr->e_shstrndx].sh_offset;
+	name_table = elf_data + shdr[ehdr->e_shstrndx].sh_offset; /*lint !e64 */ 
 
 	for (i = 0; i < ehdr->e_shnum; i++, shdr++) {
 		u32 size = shdr->sh_size;
 		u32 offset = shdr->sh_offset;
 
-		if (strcmp(name_table + shdr->sh_name, ".resource_table"))
+		if (strcmp(name_table + shdr->sh_name, ".resource_table")) /*lint !e421*/
 			continue;
 
 		table = (struct resource_table *)(elf_data + offset);

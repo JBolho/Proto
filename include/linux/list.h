@@ -181,6 +181,15 @@ static inline int list_is_last(const struct list_head *list,
 }
 
 /**
+ * list_is_valid - tests whether a list node is valid
+ * @head: the list to test.
+ */
+static inline int list_is_valid(const struct list_head *head)
+{
+	return !!head->next;
+}
+
+/**
  * list_empty - tests whether a list is empty
  * @head: the list to test.
  */

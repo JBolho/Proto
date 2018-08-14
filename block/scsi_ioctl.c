@@ -209,7 +209,7 @@ int blk_verify_command(unsigned char *cmd, fmode_t has_write_perm)
 	struct blk_cmd_filter *filter = &blk_default_cmd_filter;
 
 	/* root can do any command. */
-	if (capable(CAP_SYS_RAWIO))
+	if (capable(CAP_SYS_RAWIO) || capable(CAP_SYS_ADMIN))
 		return 0;
 
 	/* Anybody who can open the device can do a read-safe command */

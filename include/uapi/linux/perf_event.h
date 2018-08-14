@@ -347,7 +347,14 @@ struct perf_event_attr {
 		__u64		config1; /* extension of config */
 	};
 	union {
+#ifdef CONFIG_HAVE_HW_BREAKPOINT_ADDR_MASK
+		struct {
+			__u32		bp_len;
+			__u32		bp_addr_mask;
+		};
+#else
 		__u64		bp_len;
+#endif
 		__u64		config2; /* extension of config1 */
 	};
 	__u64	branch_sample_type; /* enum perf_branch_sample_type */
@@ -395,6 +402,7 @@ struct perf_event_attr {
 #define PERF_EVENT_IOC_SET_FILTER	_IOW('$', 6, char *)
 #define PERF_EVENT_IOC_ID		_IOR('$', 7, __u64 *)
 #define PERF_EVENT_IOC_SET_BPF		_IOW('$', 8, __u32)
+#define PERF_EVENT_IOC_SET_DRV_CONFIGS	_IOW('$', 10, char *)
 
 enum perf_event_ioc_flags {
 	PERF_IOC_FLAG_GROUP		= 1U << 0,

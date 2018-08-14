@@ -741,6 +741,7 @@ static void msdc_request_done(struct msdc_host *host, struct mmc_request *mrq)
 }
 
 /* returns true if command is fully handled; returns false otherwise */
+/*cppcheck-suppress * */
 static bool msdc_cmd_done(struct msdc_host *host, int events,
 			  struct mmc_request *mrq, struct mmc_command *cmd)
 {

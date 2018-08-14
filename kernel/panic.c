@@ -24,6 +24,13 @@
 #include <linux/init.h>
 #include <linux/nmi.h>
 #include <linux/console.h>
+#ifdef CONFIG_HISI_CORESIGHT_TRACE
+#include <linux/coresight.h>
+#endif
+#ifdef CONFIG_HISI_BB
+#include <asm/ptrace.h>
+#include <linux/hisi/rdr_hisi_platform.h>
+#endif
 
 #define PANIC_TIMER_STEP 100
 #define PANIC_BLINK_SPD 18
@@ -76,6 +83,26 @@ void panic(const char *fmt, ...)
 	va_list args;
 	long i, i_next = 0;
 	int state = 0;
+#ifdef CONFIG_HISI_BB
+	struct pt_regs regs;
+#endif
+
+#ifdef CONFIG_HISI_CORESIGHT_TRACE
+	etm4_disable_all();
+#endif
+
+#ifdef CONFIG_HISI_BB
+	reentrant_exception();
+	memset(&regs, 0x00, sizeof(regs));
+	/*
+	 * Avoid nested register-dumping if a panic occurs during oops processing
+	 */
+	if (!test_taint(TAINT_DIE) && oops_in_progress == 0) {
+		get_pt_regs(&regs);
+		console_verbose();
+		show_regs(&regs);
+	}
+#endif
 
 	/*
 	 * Disable local interrupts. This will prevent panic_smp_self_stop
@@ -167,7 +194,7 @@ void panic(const char *fmt, ...)
 		 * Delay timeout seconds before rebooting the machine.
 		 * We can't use the "normal" timers since we just panicked.
 		 */
-		pr_emerg("Rebooting in %d seconds..", panic_timeout);
+		pr_emerg("Rebooting in %d seconds..\n", panic_timeout);
 
 		for (i = 0; i < panic_timeout * 1000; i += PANIC_TIMER_STEP) {
 			touch_nmi_watchdog();
@@ -423,7 +450,7 @@ void oops_exit(void)
 {
 	do_oops_enter_exit();
 	print_oops_end_marker();
-	kmsg_dump(KMSG_DUMP_OOPS);
+	/*kmsg_dump has been done in the func of rdr_hisiap_reset*/
 }
 
 #ifdef WANT_WARN_ON_SLOWPATH

@@ -24,7 +24,8 @@
 #include "xhci.h"
 #include "xhci-mvebu.h"
 #include "xhci-rcar.h"
-
+#include "xhci-debugfs.h"
+#include "xhci-local-mem.h"
 static struct hc_driver __read_mostly xhci_plat_hc_driver;
 
 static int xhci_plat_setup(struct usb_hcd *hcd);
@@ -38,12 +39,37 @@ static const struct xhci_driver_overrides xhci_plat_overrides __initconst = {
 
 static void xhci_plat_quirks(struct device *dev, struct xhci_hcd *xhci)
 {
+	struct device_node	*node = dev->of_node;
+	struct usb_xhci_pdata	*pdata = dev_get_platdata(dev);
 	/*
 	 * As of now platform drivers don't provide MSI support so we ensure
 	 * here that the generic code does not try to make a pci_dev from our
 	 * dev struct in order to setup MSI
 	 */
 	xhci->quirks |= XHCI_PLAT;
+
+	if ((node && of_property_read_bool(node, "ctrl-nyet-abnormal")) ||
+			(pdata && pdata->ctrl_nyet_abnormal)) {
+		pr_info("xhci can not handle NYET in ctrl transfer on this platform\n");
+		xhci->quirks |= XHCI_CTRL_NYET_ABNORMAL;
+	}
+
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	if (pdata && pdata->disable_lpm) {
+		pr_info("xhci disable lpm\n");
+		xhci->quirks |= XHCI_DISABLE_LPM;
+	}
+
+	if (pdata && pdata->not_support_sg) {
+		pr_info("xhci not support sg list\n");
+		xhci->quirks |= XHCI_NOT_SUP_SG;
+	}
+
+	if (pdata && pdata->hcd_local_mem) {
+		pr_info("xhci use local mem\n");
+		xhci->quirks |= XHCI_HCD_LOCAL_MEM;
+	}
+#endif
 }
 
 /* called during probe() after chip reset completes */
@@ -84,15 +110,31 @@ static int xhci_plat_probe(struct platform_device *pdev)
 	struct clk              *clk;
 	int			ret;
 	int			irq;
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	int			hcd_local_mem = 0;
+#endif
 
 	if (usb_disabled())
 		return -ENODEV;
+
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	if (pdata && pdata->hcd_local_mem) {
+		hcd_local_mem = 1;
+		xhci_plat_hc_driver.flags |= HCD_LOCAL_MEM;
+		xhci_plat_hc_driver.map_urb_for_dma = xhci_map_urb_for_dma;
+		xhci_plat_hc_driver.unmap_urb_for_dma = xhci_unmap_urb_for_dma;
+	} else {
+		xhci_plat_hc_driver.flags &= ~HCD_LOCAL_MEM;
+		xhci_plat_hc_driver.map_urb_for_dma = NULL;
+		xhci_plat_hc_driver.unmap_urb_for_dma = NULL;
+	}
+#endif
 
 	driver = &xhci_plat_hc_driver;
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
-		return -ENODEV;
+		return irq;
 
 	/* Try to set 64-bit DMA first */
 	if (WARN_ON(!pdev->dev.dma_mask))
@@ -112,6 +154,10 @@ static int xhci_plat_probe(struct platform_device *pdev)
 	hcd = usb_create_hcd(driver, &pdev->dev, dev_name(&pdev->dev));
 	if (!hcd)
 		return -ENOMEM;
+
+#ifdef CONFIG_HISI_USB_SKIP_RESUME
+	hcd_to_bus(hcd)->skip_resume = true;
+#endif
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	hcd->regs = devm_ioremap_resource(&pdev->dev, res);
@@ -158,12 +204,26 @@ static int xhci_plat_probe(struct platform_device *pdev)
 		goto disable_clk;
 	}
 
+#ifdef CONFIG_HISI_USB_SKIP_RESUME
+	hcd_to_bus(xhci->shared_hcd)->skip_resume = true;
+#endif
+
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	if (hcd_local_mem) {
+		ret = xhci_create_dma_pool(xhci);
+		if (ret)
+			goto put_usb3_hcd;
+
+		INIT_LIST_HEAD(&xhci->dma_manager.dma_free_list);
+		INIT_WORK(&xhci->dma_manager.dma_free_wk,
+				xhci_dma_free_handler);
+		spin_lock_init(&xhci->dma_manager.lock);
+	}
+#endif
+
 	if ((node && of_property_read_bool(node, "usb3-lpm-capable")) ||
 			(pdata && pdata->usb3_lpm_capable))
 		xhci->quirks |= XHCI_LPM_SUPPORT;
-
-	if (HCC_MAX_PSA(xhci->hcc_params) >= 4)
-		xhci->shared_hcd->can_do_streams = 1;
 
 	hcd->usb_phy = devm_usb_get_phy_by_phandle(&pdev->dev, "usb-phy", 0);
 	if (IS_ERR(hcd->usb_phy)) {
@@ -181,12 +241,23 @@ static int xhci_plat_probe(struct platform_device *pdev)
 	if (ret)
 		goto disable_usb_phy;
 
+	if (HCC_MAX_PSA(xhci->hcc_params) >= 4)
+		xhci->shared_hcd->can_do_streams = 1;
+
 	ret = usb_add_hcd(xhci->shared_hcd, irq, IRQF_SHARED);
 	if (ret)
 		goto dealloc_usb2_hcd;
 
+	ret = xhci_create_debug_file(xhci);
+	if (ret) {
+		dev_err(&pdev->dev, "failed to initialize debugfs\n");
+		goto dealloc_usb3_hcd;
+	}
+
 	return 0;
 
+dealloc_usb3_hcd:
+	usb_remove_hcd(xhci->shared_hcd);
 
 dealloc_usb2_hcd:
 	usb_remove_hcd(hcd);
@@ -213,10 +284,23 @@ static int xhci_plat_remove(struct platform_device *dev)
 	struct xhci_hcd	*xhci = hcd_to_xhci(hcd);
 	struct clk *clk = xhci->clk;
 
+	xhci->xhc_state |= XHCI_STATE_REMOVING;
+
+	/* add for xhci debug */
+	xhci_remove_debug_file(xhci);
+
 	usb_remove_hcd(xhci->shared_hcd);
 	usb_phy_shutdown(hcd->usb_phy);
 
 	usb_remove_hcd(hcd);
+
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	xhci_destroy_dma_pool(xhci);
+
+	if (hcd->driver->flags & HCD_LOCAL_MEM)
+		flush_work(&xhci->dma_manager.dma_free_wk);
+#endif
+
 	usb_put_hcd(xhci->shared_hcd);
 
 	if (!IS_ERR(clk))
@@ -296,7 +380,7 @@ static int __init xhci_plat_init(void)
 	xhci_init_driver(&xhci_plat_hc_driver, &xhci_plat_overrides);
 	return platform_driver_register(&usb_xhci_driver);
 }
-module_init(xhci_plat_init);
+late_initcall(xhci_plat_init);
 
 static void __exit xhci_plat_exit(void)
 {

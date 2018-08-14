@@ -75,6 +75,8 @@
 #include "blk-mq.h"
 #include "blk-mq-tag.h"
 
+#include "hisi-blk-mq.h"
+
 /* FLUSH/FUA sequences */
 enum {
 	REQ_FSEQ_PREFLUSH	= (1 << 0), /* pre-flushing in progress */
@@ -95,17 +97,18 @@ enum {
 static bool blk_kick_flush(struct request_queue *q,
 			   struct blk_flush_queue *fq);
 
-static unsigned int blk_flush_policy(unsigned int fflags, struct request *rq)
+static unsigned int blk_flush_policy(unsigned long fflags, struct request *rq)
 {
 	unsigned int policy = 0;
 
 	if (blk_rq_sectors(rq))
 		policy |= REQ_FSEQ_DATA;
 
-	if (fflags & REQ_FLUSH) {
+	if (fflags & (1UL << QUEUE_FLAG_WC)) {
 		if (rq->cmd_flags & REQ_FLUSH)
 			policy |= REQ_FSEQ_PREFLUSH;
-		if (!(fflags & REQ_FUA) && (rq->cmd_flags & REQ_FUA))
+		if (!(fflags & (1UL << QUEUE_FLAG_FUA)) &&
+		    (rq->cmd_flags & REQ_FUA))
 			policy |= REQ_FSEQ_POSTFLUSH;
 	}
 	return policy;
@@ -139,10 +142,13 @@ static bool blk_flush_queue_rq(struct request *rq, bool add_front)
 		blk_mq_kick_requeue_list(q);
 		return false;
 	} else {
-		if (add_front)
+		if (add_front) {
 			list_add(&rq->queuelist, &rq->q->queue_head);
-		else
+			queue_throtl_add_request(rq->q, rq, true);
+		} else {
 			list_add_tail(&rq->queuelist, &rq->q->queue_head);
+			queue_throtl_add_request(rq->q, rq, false);
+		}
 		return true;
 	}
 }
@@ -321,6 +327,9 @@ static bool blk_kick_flush(struct request_queue *q, struct blk_flush_queue *fq)
 		struct blk_mq_hw_ctx *hctx;
 
 		flush_rq->mq_ctx = first_rq->mq_ctx;
+	#ifdef CONFIG_HISI_BLK_MQ
+		flush_rq->mq_ctx_dispatch = first_rq->mq_ctx_dispatch;
+	#endif
 		flush_rq->tag = first_rq->tag;
 		fq->orig_rq = first_rq;
 
@@ -384,7 +393,7 @@ static void mq_flush_data_end_io(struct request *rq, int error)
 void blk_insert_flush(struct request *rq)
 {
 	struct request_queue *q = rq->q;
-	unsigned int fflags = q->flush_flags;	/* may change, cache */
+	unsigned long fflags = q->queue_flags;	/* may change, cache */
 	unsigned int policy = blk_flush_policy(fflags, rq);
 	struct blk_flush_queue *fq = blk_get_flush_queue(q, rq->mq_ctx);
 
@@ -393,7 +402,7 @@ void blk_insert_flush(struct request *rq)
 	 * REQ_FLUSH and FUA for the driver.
 	 */
 	rq->cmd_flags &= ~REQ_FLUSH;
-	if (!(fflags & REQ_FUA))
+	if (!(fflags & (1UL << QUEUE_FLAG_FUA)))
 		rq->cmd_flags &= ~REQ_FUA;
 
 	/*
@@ -421,8 +430,10 @@ void blk_insert_flush(struct request *rq)
 	    !(policy & (REQ_FSEQ_PREFLUSH | REQ_FSEQ_POSTFLUSH))) {
 		if (q->mq_ops) {
 			blk_mq_insert_request(rq, false, false, true);
-		} else
+		} else {
 			list_add_tail(&rq->queuelist, &q->queue_head);
+			queue_throtl_add_request(q, rq, false);
+		}
 		return;
 	}
 

@@ -420,7 +420,7 @@ void blk_mq_put_tag(struct blk_mq_hw_ctx *hctx, unsigned int tag,
 	}
 }
 
-static void bt_for_each(struct blk_mq_hw_ctx *hctx,
+void bt_for_each(struct blk_mq_hw_ctx *hctx,
 		struct blk_mq_bitmap_tags *bt, unsigned int off,
 		busy_iter_fn *fn, void *data, bool reserved)
 {
@@ -442,7 +442,7 @@ static void bt_for_each(struct blk_mq_hw_ctx *hctx,
 	}
 }
 
-static void bt_tags_for_each(struct blk_mq_tags *tags,
+void bt_tags_for_each(struct blk_mq_tags *tags,
 		struct blk_mq_bitmap_tags *bt, unsigned int off,
 		busy_tag_iter_fn *fn, void *data, bool reserved)
 {
@@ -468,6 +468,12 @@ static void bt_tags_for_each(struct blk_mq_tags *tags,
 void blk_mq_all_tag_busy_iter(struct blk_mq_tags *tags, busy_tag_iter_fn *fn,
 		void *priv)
 {
+#ifdef CONFIG_HISI_BLK_MQ
+	if(tags->hisi_dispatch_strategy_support){
+		hisi_blk_mq_all_tag_busy_iter(tags,fn,priv);
+		return;
+	}
+#endif
 	if (tags->nr_reserved_tags)
 		bt_tags_for_each(tags, &tags->breserved_tags, 0, fn, priv, true);
 	bt_tags_for_each(tags, &tags->bitmap_tags, tags->nr_reserved_tags, fn, priv,
@@ -481,6 +487,10 @@ void blk_mq_queue_tag_busy_iter(struct request_queue *q, busy_iter_fn *fn,
 	struct blk_mq_hw_ctx *hctx;
 	int i;
 
+#ifdef CONFIG_HISI_BLK_MQ
+	if(likely(hisi_blk_mq_queue_tag_busy_iter(q,fn,priv)))
+		return;
+#endif
 
 	queue_for_each_hw_ctx(q, hctx, i) {
 		struct blk_mq_tags *tags = hctx->tags;
@@ -497,10 +507,9 @@ void blk_mq_queue_tag_busy_iter(struct request_queue *q, busy_iter_fn *fn,
 		bt_for_each(hctx, &tags->bitmap_tags, tags->nr_reserved_tags, fn, priv,
 		      false);
 	}
-
 }
 
-static unsigned int bt_unused_tags(struct blk_mq_bitmap_tags *bt)
+unsigned int bt_unused_tags(struct blk_mq_bitmap_tags *bt)
 {
 	unsigned int i, used;
 
@@ -513,17 +522,20 @@ static unsigned int bt_unused_tags(struct blk_mq_bitmap_tags *bt)
 	return bt->depth - used;
 }
 
-static void bt_update_count(struct blk_mq_bitmap_tags *bt,
+void bt_update_count(struct blk_mq_bitmap_tags *bt,
 			    unsigned int depth)
 {
 	unsigned int tags_per_word = 1U << bt->bits_per_word;
 	unsigned int map_depth = depth;
 
 	if (depth) {
-		int i;
+		unsigned int i;
 
 		for (i = 0; i < bt->map_nr; i++) {
 			bt->map[i].depth = min(map_depth, tags_per_word);
+		#ifdef CONFIG_HISI_BLK_MQ
+			bt->map[i].next_tag = 0;
+		#endif
 			map_depth -= bt->map[i].depth;
 		}
 	}
@@ -567,14 +579,17 @@ static int bt_alloc(struct blk_mq_bitmap_tags *bt, unsigned int depth,
 		nr = ALIGN(depth, tags_per_word) / tags_per_word;
 		bt->map = kzalloc_node(nr * sizeof(struct blk_align_bitmap),
 						GFP_KERNEL, node);
-		if (!bt->map)
+		if (!bt->map) {
+			pr_err("%s: alloc bt maps failed\n", __func__);
 			return -ENOMEM;
+		}
 
 		bt->map_nr = nr;
 	}
 
 	bt->bs = kzalloc(BT_WAIT_QUEUES * sizeof(*bt->bs), GFP_KERNEL);
 	if (!bt->bs) {
+		pr_err("%s: alloc bt bs failed\n", __func__);
 		kfree(bt->map);
 		bt->map = NULL;
 		return -ENOMEM;
@@ -610,6 +625,7 @@ static struct blk_mq_tags *blk_mq_init_bitmap_tags(struct blk_mq_tags *tags,
 
 	return tags;
 enomem:
+	pr_err("%s: error nomem\n", __func__);
 	bt_free(&tags->bitmap_tags);
 	kfree(tags);
 	return NULL;
@@ -627,8 +643,10 @@ struct blk_mq_tags *blk_mq_init_tags(unsigned int total_tags,
 	}
 
 	tags = kzalloc_node(sizeof(*tags), GFP_KERNEL, node);
-	if (!tags)
+	if (!tags) {
+		pr_err("blk-mq: alloc tags failed\n");
 		return NULL;
+	}
 
 	if (!zalloc_cpumask_var(&tags->cpumask, GFP_KERNEL)) {
 		kfree(tags);
@@ -637,7 +655,9 @@ struct blk_mq_tags *blk_mq_init_tags(unsigned int total_tags,
 
 	tags->nr_tags = total_tags;
 	tags->nr_reserved_tags = reserved_tags;
-
+#ifdef CONFIG_HISI_BLK_MQ
+	tags->hisi_dispatch_strategy_support = false;
+#endif
 	return blk_mq_init_bitmap_tags(tags, node, alloc_policy);
 }
 
@@ -651,16 +671,22 @@ void blk_mq_free_tags(struct blk_mq_tags *tags)
 
 void blk_mq_tag_init_last_tag(struct blk_mq_tags *tags, unsigned int *tag)
 {
+#ifdef CONFIG_HISI_BLK_MQ
+	hisi_blk_mq_tag_init_last_tag(tags,tag);
+#else
 	unsigned int depth = tags->nr_tags - tags->nr_reserved_tags;
 
 	*tag = prandom_u32() % depth;
+#endif
 }
 
 int blk_mq_tag_update_depth(struct blk_mq_tags *tags, unsigned int tdepth)
 {
 	tdepth -= tags->nr_reserved_tags;
-	if (tdepth > tags->nr_tags)
+	if (tdepth > tags->nr_tags) {
+		pr_err("%s: target depth too large\n", __func__);
 		return -EINVAL;
+	}
 
 	/*
 	 * Don't need (or can't) update reserved tags here, they remain

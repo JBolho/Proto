@@ -116,6 +116,10 @@ enum {
 #define TCP_SAVE_SYN		27	/* Record SYN headers for new connections */
 #define TCP_SAVED_SYN		28	/* Get SYN headers recorded for connection */
 
+#ifdef CONFIG_HUAWEI_BASTET
+#define TCP_RECONN		100
+#endif
+
 struct tcp_repair_opt {
 	__u32	opt_code;
 	__u32	opt_val;
@@ -145,8 +149,15 @@ enum tcp_ca_state {
 #define TCPF_CA_CWR	(1<<TCP_CA_CWR)
 	TCP_CA_Recovery = 3,
 #define TCPF_CA_Recovery (1<<TCP_CA_Recovery)
+#ifdef CONFIG_HW_CROSSLAYER_OPT
+	TCP_CA_Loss = 4,
+#define TCPF_CA_Loss	(1<<TCP_CA_Loss)
+	TCP_CA_Modem_Drop = 5
+#define TCPF_CA_Modem_Drop (1<<TCP_CA_Modem_Drop)
+#else
 	TCP_CA_Loss = 4
 #define TCPF_CA_Loss	(1<<TCP_CA_Loss)
+#endif
 };
 
 struct tcp_info {
@@ -157,6 +168,9 @@ struct tcp_info {
 	__u8	tcpi_backoff;
 	__u8	tcpi_options;
 	__u8	tcpi_snd_wscale : 4, tcpi_rcv_wscale : 4;
+#ifdef CONFIG_TCP_CONG_BBR
+	__u8	tcpi_delivery_rate_app_limited:1;
+#endif
 
 	__u32	tcpi_rto;
 	__u32	tcpi_ato;
@@ -196,6 +210,10 @@ struct tcp_info {
 	__u64	tcpi_bytes_received; /* RFC4898 tcpEStatsAppHCThruOctetsReceived */
 	__u32	tcpi_segs_out;	     /* RFC4898 tcpEStatsPerfSegsOut */
 	__u32	tcpi_segs_in;	     /* RFC4898 tcpEStatsPerfSegsIn */
+
+#ifdef CONFIG_TCP_CONG_BBR
+	__u64   tcpi_delivery_rate;
+#endif
 };
 
 /* for TCP_MD5SIG socket option */

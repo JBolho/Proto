@@ -62,7 +62,9 @@ static int ecryptfs_threadfn(void *ignored)
 		wait_event_freezable(
 			ecryptfs_kthread_ctl.wait,
 			(!list_empty(&ecryptfs_kthread_ctl.req_list)
+/*lint -e666 -esym(666,*)*/
 			 || kthread_should_stop()));
+/*lint -e666 +esym(666,*)*/
 		mutex_lock(&ecryptfs_kthread_ctl.mux);
 		if (ecryptfs_kthread_ctl.flags & ECRYPTFS_KTHREAD_ZOMBIE) {
 			mutex_unlock(&ecryptfs_kthread_ctl.mux);
@@ -74,7 +76,9 @@ static int ecryptfs_threadfn(void *ignored)
 					       kthread_ctl_list);
 			list_del(&req->kthread_ctl_list);
 			*req->lower_file = dentry_open(&req->path,
+/*lint -e666 -esym(666,*)*/
 				(O_RDWR | O_LARGEFILE), current_cred());
+/*lint -e666 +esym(666,*)*/
 			complete(&req->done);
 		}
 		mutex_unlock(&ecryptfs_kthread_ctl.mux);

@@ -1906,6 +1906,8 @@ static int fn_trie_dump_leaf(struct key_vector *l, struct fib_table *tb,
 
 	/* rcu_read_lock is hold by caller */
 	hlist_for_each_entry_rcu(fa, &l->leaf, fa_list) {
+		int err;
+
 		if (i < s_i) {
 			i++;
 			continue;
@@ -1916,17 +1918,14 @@ static int fn_trie_dump_leaf(struct key_vector *l, struct fib_table *tb,
 			continue;
 		}
 
-		if (fib_dump_info(skb, NETLINK_CB(cb->skb).portid,
-				  cb->nlh->nlmsg_seq,
-				  RTM_NEWROUTE,
-				  tb->tb_id,
-				  fa->fa_type,
-				  xkey,
-				  KEYLENGTH - fa->fa_slen,
-				  fa->fa_tos,
-				  fa->fa_info, NLM_F_MULTI) < 0) {
+		err = fib_dump_info(skb, NETLINK_CB(cb->skb).portid,
+				    cb->nlh->nlmsg_seq, RTM_NEWROUTE,
+				    tb->tb_id, fa->fa_type,
+				    xkey, KEYLENGTH - fa->fa_slen,
+				    fa->fa_tos, fa->fa_info, NLM_F_MULTI);
+		if (err < 0) {
 			cb->args[4] = i;
-			return -1;
+			return err;
 		}
 		i++;
 	}
@@ -1948,10 +1947,13 @@ int fib_table_dump(struct fib_table *tb, struct sk_buff *skb,
 	t_key key = cb->args[3];
 
 	while ((l = leaf_walk_rcu(&tp, key)) != NULL) {
-		if (fn_trie_dump_leaf(l, tb, skb, cb) < 0) {
+		int err;
+
+		err = fn_trie_dump_leaf(l, tb, skb, cb);
+		if (err < 0) {
 			cb->args[3] = key;
 			cb->args[2] = count;
-			return -1;
+			return err;
 		}
 
 		++count;
@@ -2456,22 +2458,19 @@ static struct key_vector *fib_route_get_idx(struct fib_route_iter *iter,
 	struct key_vector *l, **tp = &iter->tnode;
 	t_key key;
 
-	/* use cache location of next-to-find key */
+	/* use cached location of previously found key */
 	if (iter->pos > 0 && pos >= iter->pos) {
-		pos -= iter->pos;
 		key = iter->key;
 	} else {
-		iter->pos = 0;
+		iter->pos = 1;
 		key = 0;
 	}
 
-	while ((l = leaf_walk_rcu(tp, key)) != NULL) {
+	pos -= iter->pos;
+
+	while ((l = leaf_walk_rcu(tp, key)) && (pos-- > 0)) {
 		key = l->key + 1;
 		iter->pos++;
-
-		if (--pos <= 0)
-			break;
-
 		l = NULL;
 
 		/* handle unlikely case of a key wrap */
@@ -2480,7 +2479,7 @@ static struct key_vector *fib_route_get_idx(struct fib_route_iter *iter,
 	}
 
 	if (l)
-		iter->key = key;	/* remember it */
+		iter->key = l->key;	/* remember it */
 	else
 		iter->pos = 0;		/* forget it */
 
@@ -2508,7 +2507,7 @@ static void *fib_route_seq_start(struct seq_file *seq, loff_t *pos)
 		return fib_route_get_idx(iter, *pos);
 
 	iter->pos = 0;
-	iter->key = 0;
+	iter->key = KEY_MAX;
 
 	return SEQ_START_TOKEN;
 }
@@ -2517,7 +2516,7 @@ static void *fib_route_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 {
 	struct fib_route_iter *iter = seq->private;
 	struct key_vector *l = NULL;
-	t_key key = iter->key;
+	t_key key = iter->key + 1;
 
 	++*pos;
 
@@ -2526,7 +2525,7 @@ static void *fib_route_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 		l = leaf_walk_rcu(&iter->tnode, key);
 
 	if (l) {
-		iter->key = l->key + 1;
+		iter->key = l->key;
 		iter->pos++;
 	} else {
 		iter->pos = 0;

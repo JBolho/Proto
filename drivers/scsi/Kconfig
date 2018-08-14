@@ -56,6 +56,11 @@ config SCSI_MQ_DEFAULT
 
 	  If unsure say N.
 
+config SCSI_HISI_MQ
+	bool "SCSI: use HISI optimise on SCSI MQ"
+	depends on SCSI
+	default n
+
 config SCSI_PROC_FS
 	bool "legacy /proc/scsi/ support"
 	depends on SCSI && PROC_FS
@@ -1637,7 +1642,7 @@ config ATARI_SCSI_RESET_BOOT
 
 config MAC_SCSI
 	tristate "Macintosh NCR5380 SCSI"
-	depends on MAC && SCSI=y
+	depends on MAC && SCSI
 	select SCSI_SPI_ATTRS
 	help
 	  This is the NCR 5380 SCSI controller included on most of the 68030

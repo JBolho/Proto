@@ -67,3 +67,5 @@ obj-$(CONFIG_XGENE_DMA) += xgene-dma.o
 obj-$(CONFIG_ZX_DMA) += zx296702_dma.o
 
 obj-y += xilinx/
+obj-$(CONFIG_HISI_DMA) += hisi_dma.o
+obj-$(CONFIG_HISI_DMA) += hisi_dma_64.o

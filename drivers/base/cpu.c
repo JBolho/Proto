@@ -32,6 +32,9 @@ static int cpu_subsys_match(struct device *dev, struct device_driver *drv)
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
+#ifdef CONFIG_HISI_BIG_MAXFREQ_HOTPLUG
+extern bool cpufreq_hotplugged(int cpu);
+#endif
 static void change_cpu_under_node(struct cpu *cpu,
 			unsigned int from_nid, unsigned int to_nid)
 {
@@ -47,6 +50,11 @@ static int cpu_subsys_online(struct device *dev)
 	int cpuid = dev->id;
 	int from_nid, to_nid;
 	int ret;
+
+#ifdef CONFIG_HISI_BIG_MAXFREQ_HOTPLUG
+	if (cpufreq_hotplugged(cpuid))
+		return -EBUSY;
+#endif
 
 	from_nid = cpu_to_node(cpuid);
 	if (from_nid == NUMA_NO_NODE)

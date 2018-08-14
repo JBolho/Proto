@@ -93,7 +93,7 @@ struct mmc_pwrseq *mmc_pwrseq_emmc_alloc(struct mmc_host *host,
 
 	pwrseq->pwrseq.ops = &mmc_pwrseq_emmc_ops;
 
-	return &pwrseq->pwrseq;
+	return &pwrseq->pwrseq;/*lint !e429*/
 free:
 	kfree(pwrseq);
 	return ERR_PTR(ret);

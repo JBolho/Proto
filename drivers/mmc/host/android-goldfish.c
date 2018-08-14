@@ -143,6 +143,7 @@ goldfish_mmc_show_cover_switch(struct device *dev,
 {
 	struct goldfish_mmc_host *host = dev_get_drvdata(dev);
 
+	/*cppcheck-suppress * */
 	return sprintf(buf, "%s\n", goldfish_mmc_cover_is_open(host) ? "open" :
 		       "closed");
 }

@@ -72,6 +72,9 @@
  * SPARSEMEM_EXTREME with !SPARSEMEM_VMEMMAP).
  */
 enum pageflags {
+#ifdef CONFIG_HISI_KERNELDUMP
+	PG_memdump,		/* added for kernel dump. */
+#endif
 	PG_locked,		/* Page is locked. Don't touch. */
 	PG_error,
 	PG_referenced,
@@ -107,6 +110,9 @@ enum pageflags {
 #if defined(CONFIG_IDLE_PAGE_TRACKING) && defined(CONFIG_64BIT)
 	PG_young,
 	PG_idle,
+#endif
+#ifdef CONFIG_TASK_PROTECT_LRU
+	PG_protect,
 #endif
 	__NR_PAGEFLAGS,
 
@@ -222,7 +228,9 @@ PAGEFLAG(Foreign, foreign);				/* Xen */
 PAGEFLAG(Reserved, reserved) __CLEARPAGEFLAG(Reserved, reserved)
 PAGEFLAG(SwapBacked, swapbacked) __CLEARPAGEFLAG(SwapBacked, swapbacked)
 	__SETPAGEFLAG(SwapBacked, swapbacked)
-
+#ifdef CONFIG_HISI_KERNELDUMP
+PAGEFLAG(MemDump, memdump);   /*added for kernel dump*/
+#endif
 __PAGEFLAG(SlobFree, slob_free)
 
 /*
@@ -286,6 +294,10 @@ TESTSCFLAG(HWPoison, hwpoison)
 #else
 PAGEFLAG_FALSE(HWPoison)
 #define __PG_HWPOISON 0
+#endif
+
+#ifdef CONFIG_TASK_PROTECT_LRU
+PAGEFLAG(Protect, protect)
 #endif
 
 #if defined(CONFIG_IDLE_PAGE_TRACKING) && defined(CONFIG_64BIT)

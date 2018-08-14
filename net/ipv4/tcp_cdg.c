@@ -294,6 +294,37 @@ static void tcp_cdg_cong_avoid(struct sock *sk, u32 ack, u32 acked)
 	ca->shadow_wnd = max(ca->shadow_wnd, ca->shadow_wnd + incr);
 }
 
+
+#ifdef CONFIG_TCP_CONG_BBR
+static void tcp_cdg_acked(struct sock *sk, const struct ack_sample *sample)
+{
+	struct cdg *ca = inet_csk_ca(sk);
+	struct tcp_sock *tp = tcp_sk(sk);
+
+	if (sample->rtt_us <= 0)
+		return;
+
+	/* A heuristic for filtering delayed ACKs, adapted from:
+	 * D.A. Hayes. "Timing enhancements to the FreeBSD kernel to support
+	 * delay and rate based TCP mechanisms." TR 100219A. CAIA, 2010.
+	 */
+	if (tp->sacked_out == 0) {
+		if (sample->pkts_acked == 1 && ca->delack) {
+			/* A delayed ACK is only used for the minimum if it is
+			 * provenly lower than an existing non-zero minimum.
+			 */
+			ca->rtt.min = min(ca->rtt.min, sample->rtt_us);
+			ca->delack--;
+			return;
+		} else if (sample->pkts_acked > 1 && ca->delack < 5) {
+			ca->delack++;
+		}
+	}
+
+	ca->rtt.min = min_not_zero(ca->rtt.min, sample->rtt_us);
+	ca->rtt.max = max(ca->rtt.max, sample->rtt_us);
+}
+#else
 static void tcp_cdg_acked(struct sock *sk, u32 num_acked, s32 rtt_us)
 {
 	struct cdg *ca = inet_csk_ca(sk);
@@ -322,6 +353,7 @@ static void tcp_cdg_acked(struct sock *sk, u32 num_acked, s32 rtt_us)
 	ca->rtt.min = min_not_zero(ca->rtt.min, rtt_us);
 	ca->rtt.max = max(ca->rtt.max, rtt_us);
 }
+#endif
 
 static u32 tcp_cdg_ssthresh(struct sock *sk)
 {

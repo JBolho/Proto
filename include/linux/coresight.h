@@ -14,8 +14,11 @@
 #define _LINUX_CORESIGHT_H
 
 #include <linux/device.h>
+#include <linux/version.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0)
+#include <linux/perf_event.h>
 #include <linux/sched.h>
-
+#endif
 /* Peripheral id registers (0xFD0-0xFEC) */
 #define CORESIGHT_PERIPHIDR4	0xfd0
 #define CORESIGHT_PERIPHIDR5	0xfd4
@@ -36,8 +39,26 @@
 #define PFT_ARCH_V1_0		0x30
 #define PFT_ARCH_V1_1		0x31
 
-#define CORESIGHT_UNLOCK	0xc5acce55
+#define SNID_MASK 				(BIT(7)|BIT(6)) /* Secure non-invasive debug */
+#define SNID_DEBUG_ENABLE 		(BIT(7)|BIT(6))
+#define SNID_DEBUG_DISABLE 		BIT(7)
 
+#define SID_MASK 				(BIT(5)|BIT(4)) /* Secure invasive debug*/
+#define SID_DEBUG_ENABLE 		(BIT(5)|BIT(4))
+#define SID_DEBUG_DISABLE 		BIT(5)
+
+#define NSNID_MASK 				(BIT(3)|BIT(2))/*Non-secure non-invasive debug*/
+#define NSNID_DEBUG_ENABLE 		(BIT(3)|BIT(2))
+#define NSNID_DEBUG_DISABLE 	BIT(3)
+
+
+#define NSID_MASK (BIT(1)|BIT(0)) /* Non-secure invasive debug*/
+#define NSID_DEBUG_ENABLE (BIT(1)|BIT(0))
+#define NSID_DEBUG_DISABLE BIT(1)
+
+#define CORESIGHT_UNLOCK	0xc5acce55
+#define err_print(fmt, ...)  	printk(KERN_ERR "%s: "fmt, __func__, ##__VA_ARGS__)
+#define info_print(fmt, ...)  	printk(KERN_INFO "%s: "fmt, __func__, ##__VA_ARGS__)
 extern struct bus_type coresight_bustype;
 
 enum coresight_dev_type {
@@ -152,7 +173,6 @@ struct coresight_connection {
 		by @coresight_ops.
  * @dev:	The device entity associated to this component.
  * @refcnt:	keep track of what is in use.
- * @path_link:	link of current component into the path being enabled.
  * @orphan:	true if the component has connections that haven't been linked.
  * @enable:	'true' if component is currently part of an active path.
  * @activated:	'true' only if a _sink_ has been activated.  A sink can be
@@ -168,7 +188,9 @@ struct coresight_device {
 	const struct coresight_ops *ops;
 	struct device dev;
 	atomic_t *refcnt;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,1,0)
 	struct list_head path_link;
+#endif
 	bool orphan;
 	bool enable;	/* true only if configured as part of a path */
 	bool activated;	/* true only if a sink is part of a path */
@@ -183,12 +205,35 @@ struct coresight_device {
 /**
  * struct coresight_ops_sink - basic operations for a sink
  * Operations available for sinks
- * @enable:	enables the sink.
- * @disable:	disables the sink.
+ * @enable:		enables the sink.
+ * @disable:		disables the sink.
+ * @alloc_buffer:	initialises perf's ring buffer for trace collection.
+ * @free_buffer:	release memory allocated in @get_config.
+ * @set_buffer:		initialises buffer mechanic before a trace session.
+ * @reset_buffer:	finalises buffer mechanic after a trace session.
+ * @update_buffer:	update buffer pointers after a trace session.
  */
 struct coresight_ops_sink {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0)
+	int (*enable)(struct coresight_device *csdev, u32 mode);
+	void (*disable)(struct coresight_device *csdev);
+	void *(*alloc_buffer)(struct coresight_device *csdev, int cpu,
+			      void **pages, int nr_pages, bool overwrite);
+	void (*free_buffer)(void *config);
+	int (*set_buffer)(struct coresight_device *csdev,
+			  struct perf_output_handle *handle,
+			  void *sink_config);
+	unsigned long (*reset_buffer)(struct coresight_device *csdev,
+				      struct perf_output_handle *handle,
+				      void *sink_config, bool *lost);
+	void (*update_buffer)(struct coresight_device *csdev,
+			      struct perf_output_handle *handle,
+			      void *sink_config);
+#else
 	int (*enable)(struct coresight_device *csdev);
 	void (*disable)(struct coresight_device *csdev);
+#endif
+
 };
 
 /**
@@ -205,15 +250,25 @@ struct coresight_ops_link {
 /**
  * struct coresight_ops_source - basic operations for a source
  * Operations available for sources.
+ * @cpu_id:	returns the value of the CPU number this component
+ *		is associated to.
  * @trace_id:	returns the value of the component's trace ID as known
-		to the HW.
+ *		to the HW.
  * @enable:	enables tracing for a source.
  * @disable:	disables tracing for a source.
  */
 struct coresight_ops_source {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,1,0)
+	int (*cpu_id)(struct coresight_device *csdev);
+	int (*trace_id)(struct coresight_device *csdev);
+	int (*enable)(struct coresight_device *csdev,
+		      struct perf_event_attr *attr,  u32 mode);
+	void (*disable)(struct coresight_device *csdev);
+#else
 	int (*trace_id)(struct coresight_device *csdev);
 	int (*enable)(struct coresight_device *csdev);
 	void (*disable)(struct coresight_device *csdev);
+#endif
 };
 
 struct coresight_ops {
@@ -230,6 +285,15 @@ extern int coresight_enable(struct coresight_device *csdev);
 extern void coresight_disable(struct coresight_device *csdev);
 extern int coresight_timeout(void __iomem *addr, u32 offset,
 			     int position, int value);
+extern unsigned int coresight_access_enabled(void);
+extern void coresight_refresh_path(struct coresight_device *csdev, int enable);
+extern int _etm4_cpuilde_restore(void);
+extern int check_cpu_online(struct coresight_device *csdev);
+extern void etm4_disable_all(void);
+extern void *get_etb_drvdata_bydevnode(struct device_node *np);
+extern int etbetf_restore(void *drv);
+extern void *get_funnel_drvdata_bydevnode(struct device_node *np);
+extern int funnel_restore(void *drv);
 #else
 static inline struct coresight_device *
 coresight_register(struct coresight_desc *desc) { return NULL; }
@@ -239,14 +303,29 @@ coresight_enable(struct coresight_device *csdev) { return -ENOSYS; }
 static inline void coresight_disable(struct coresight_device *csdev) {}
 static inline int coresight_timeout(void __iomem *addr, u32 offset,
 				     int position, int value) { return 1; }
+static inline unsigned int coresight_access_enabled(void) { return 0; }
+static inline int _etm4_cpuilde_restore(void) { return 0; }
+static inline void etm4_disable_all(void) {}
+static inline void *get_etb_drvdata_bydevnode(struct device_node *np) { return NULL; }
+static inline int etbetf_restore(void *drv) { return -1; }
+static inline void *get_funnel_drvdata_bydevnode(struct device_node *np) { return NULL; }
+static inline int funnel_restore(void *drv) { return -1; }
 #endif
 
 #ifdef CONFIG_OF
 extern struct coresight_platform_data *of_get_coresight_platform_data(
 				struct device *dev, struct device_node *node);
+extern struct device_node *of_get_coresight_etb_data(
+				struct device *dev, struct device_node *node);
+extern struct device_node *of_get_coresight_funnel_data(
+				struct device *dev, struct device_node *node);
 #else
 static inline struct coresight_platform_data *of_get_coresight_platform_data(
 	struct device *dev, struct device_node *node) { return NULL; }
+static inline struct device_node *of_get_coresight_etb_data(
+				struct device *dev, struct device_node *node) { return NULL; }
+static inline struct device_node *of_get_coresight_funnel_data(
+				struct device *dev, struct device_node *node) { return NULL; }
 #endif
 
 #ifdef CONFIG_PID_NS

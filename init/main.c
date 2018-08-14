@@ -88,13 +88,21 @@
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
 
+#if (defined CONFIG_HUAWEI_KERNEL_STACK_RANDOMIZE) || \
+	(defined CONFIG_HUAWEI_KERNEL_STACK_RANDOMIZE_STRONG)
+#include <chipset_common/kernel_harden/kaslr.h>
+#endif
+#ifdef CONFIG_HUAWEI_BOOT_TIME
+#include <huawei_platform/boottime/hw_boottime.h>
+#endif
 static int kernel_init(void *);
 
 extern void init_IRQ(void);
 extern void fork_init(void);
 extern void radix_tree_init(void);
-#ifndef CONFIG_DEBUG_RODATA
-static inline void mark_rodata_ro(void) { }
+
+#ifdef CONFIG_HW_MMC_MAINTENANCE_DATA
+#include <linux/mmc/hw_mmc_maintenance.h>
 #endif
 
 /*
@@ -486,6 +494,10 @@ static void __init mm_init(void)
 	 * bigger than MAX_ORDER unless SPARSEMEM.
 	 */
 	page_ext_init_flatmem();
+#ifdef CONFIG_HW_MMC_MAINTENANCE_DATA
+	mmc_bootmem = (void*)alloc_bootmem(MMC_BOOTMEM_SIZE);
+	mmc_bootmem_init(mmc_bootmem);
+#endif
 	mem_init();
 	kmem_cache_init();
 	percpu_init_late();
@@ -504,6 +516,13 @@ asmlinkage __visible void __init start_kernel(void)
 	 * lockdep hash:
 	 */
 	lockdep_init();
+#ifdef CONFIG_HUAWEI_KERNEL_STACK_RANDOMIZE
+	kstack_randomize_init();
+#endif
+#ifdef CONFIG_HUAWEI_KERNEL_STACK_RANDOMIZE_STRONG
+	kti_randomize_init();
+	set_init_thread_info((unsigned long)&init_stack);
+#endif
 	set_task_stack_end_magic(&init_task);
 	smp_setup_processor_id();
 	debug_objects_early_init();
@@ -535,7 +554,9 @@ asmlinkage __visible void __init start_kernel(void)
 	build_all_zonelists(NULL, NULL);
 	page_alloc_init();
 
+#ifdef HISI_SN_CMDLINE
 	pr_notice("Kernel command line: %s\n", boot_command_line);
+#endif
 	parse_early_param();
 	after_dashes = parse_args("Booting kernel",
 				  static_command_line, __start___param,
@@ -791,7 +812,11 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	if (initcall_debug)
 		ret = do_one_initcall_debug(fn);
 	else
+#ifdef CONFIG_HUAWEI_BOOT_TIME
+		ret = do_boottime_initcall(fn);
+#else
 		ret = fn();
+#endif
 
 	msgbuf[0] = 0;
 
@@ -929,6 +954,28 @@ static int try_to_run_init_process(const char *init_filename)
 
 static noinline void __init kernel_init_freeable(void);
 
+#ifdef CONFIG_DEBUG_RODATA
+static bool rodata_enabled = true;
+static int __init set_debug_rodata(char *str)
+{
+	return strtobool(str, &rodata_enabled);
+}
+__setup("rodata=", set_debug_rodata);
+
+static void mark_readonly(void)
+{
+	if (rodata_enabled)
+		mark_rodata_ro();
+	else
+		pr_info("Kernel memory protection disabled.\n");
+}
+#else
+static inline void mark_readonly(void)
+{
+	pr_warn("This architecture does not have kernel memory protection.\n");
+}
+#endif
+
 static int __ref kernel_init(void *unused)
 {
 	int ret;
@@ -937,12 +984,16 @@ static int __ref kernel_init(void *unused)
 	/* need to finish all async __init code before freeing the memory */
 	async_synchronize_full();
 	free_initmem();
-	mark_rodata_ro();
+	mark_readonly();
 	system_state = SYSTEM_RUNNING;
 	numa_default_policy();
 
 	flush_delayed_fput();
 
+	pr_err("Kernel init end, jump to execute /init\n");
+#ifdef CONFIG_HUAWEI_BOOT_TIME
+	boot_record("[INFOR] Kernel_init_done");
+#endif
 	if (ramdisk_execute_command) {
 		ret = run_init_process(ramdisk_execute_command);
 		if (!ret)

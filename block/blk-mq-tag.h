@@ -23,7 +23,9 @@ struct blk_mq_bitmap_tags {
 
 	unsigned int map_nr;
 	struct blk_align_bitmap *map;
-
+#ifdef CONFIG_HISI_BLK_MQ
+	atomic_t wait_index;
+#endif
 	atomic_t wake_index;
 	struct bt_wait_state *bs;
 };
@@ -34,12 +36,23 @@ struct blk_mq_bitmap_tags {
 struct blk_mq_tags {
 	unsigned int nr_tags;
 	unsigned int nr_reserved_tags;
-
+#ifdef CONFIG_HISI_BLK_MQ
+	unsigned int nr_high_prio_tags;
+	unsigned int tags_id_offset;
+	unsigned int reserved_tags_id_offset;
+	unsigned int high_prio_tags_id_offset;
+	atomic_t tags_used_count;
+	atomic_t reserved_tags_used_count;
+	atomic_t high_prio_tags_used_count;
+	bool hisi_dispatch_strategy_support;
+#endif
 	atomic_t active_queues;
 
 	struct blk_mq_bitmap_tags bitmap_tags;
 	struct blk_mq_bitmap_tags breserved_tags;
-
+#ifdef CONFIG_HISI_BLK_MQ
+	struct blk_mq_bitmap_tags highprio_tags;
+#endif
 	struct request **rqs;
 	struct list_head page_list;
 

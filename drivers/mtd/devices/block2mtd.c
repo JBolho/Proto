@@ -299,6 +299,7 @@ static struct block2mtd_dev *add_device(char *devname, int erase_size,
 	dev->mtd._write = block2mtd_write;
 	dev->mtd._sync = block2mtd_sync;
 	dev->mtd._read = block2mtd_read;
+
 	dev->mtd.priv = dev;
 	dev->mtd.owner = THIS_MODULE;
 
@@ -379,7 +380,7 @@ static int block2mtd_init_called = 0;
 static char block2mtd_paramline[80 + 12];
 #endif
 
-static int block2mtd_setup2(const char *val)
+int block2mtd_setup2(const char *val)
 {
 	/* 80 for device, 12 for erase size, 80 for name, 8 for timeout */
 	char buf[80 + 12 + 80 + 8];

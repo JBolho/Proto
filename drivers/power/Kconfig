@@ -510,6 +510,16 @@ config AXP20X_POWER
 
 source "drivers/power/reset/Kconfig"
 
+config POWER_HISI
+	bool "hisilicon power charger/coul driver"
+	default n
+	help
+	  support hisi power charger/coul driver
+
+if POWER_HISI
+source "drivers/power/hisi/Kconfig"
+endif
+
 endif # POWER_SUPPLY
 
 source "drivers/power/avs/Kconfig"

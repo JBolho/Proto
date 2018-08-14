@@ -69,7 +69,11 @@ int tcp_register_congestion_control(struct tcp_congestion_ops *ca)
 	int ret = 0;
 
 	/* all algorithms must implement ssthresh and cong_avoid ops */
+#ifdef CONFIG_TCP_CONG_BBR
+	if (!ca->ssthresh || !(ca->cong_avoid || ca->cong_control)) {
+#else
 	if (!ca->ssthresh || !ca->cong_avoid) {
+#endif
 		pr_err("%s does not implement required ops\n", ca->name);
 		return -EINVAL;
 	}
@@ -183,6 +187,7 @@ void tcp_init_congestion_control(struct sock *sk)
 {
 	const struct inet_connection_sock *icsk = inet_csk(sk);
 
+	tcp_sk(sk)->prior_ssthresh = 0;
 	if (icsk->icsk_ca_ops->init)
 		icsk->icsk_ca_ops->init(sk);
 	if (tcp_ca_needs_ecn(sk))

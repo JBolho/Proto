@@ -98,8 +98,13 @@ static inline void measure_rtt(struct sock *sk, u32 srtt)
 	}
 }
 
+#ifdef CONFIG_TCP_CONG_BBR
+static void measure_achieved_throughput(struct sock *sk,
+					const struct ack_sample *sample)
+#else
 static void measure_achieved_throughput(struct sock *sk,
 					u32 pkts_acked, s32 rtt)
+#endif
 {
 	const struct inet_connection_sock *icsk = inet_csk(sk);
 	const struct tcp_sock *tp = tcp_sk(sk);
@@ -107,10 +112,19 @@ static void measure_achieved_throughput(struct sock *sk,
 	u32 now = tcp_time_stamp;
 
 	if (icsk->icsk_ca_state == TCP_CA_Open)
+#ifdef CONFIG_TCP_CONG_BBR
+		ca->pkts_acked = sample->pkts_acked;
+#else
 		ca->pkts_acked = pkts_acked;
+#endif
 
+#ifdef CONFIG_TCP_CONG_BBR
+	if (sample->rtt_us > 0)
+		measure_rtt(sk, usecs_to_jiffies(sample->rtt_us));
+#else
 	if (rtt > 0)
 		measure_rtt(sk, usecs_to_jiffies(rtt));
+#endif
 
 	if (!use_bandwidth_switch)
 		return;
@@ -122,7 +136,11 @@ static void measure_achieved_throughput(struct sock *sk,
 		return;
 	}
 
+#ifdef CONFIG_TCP_CONG_BBR
+	ca->packetcount += sample->pkts_acked;
+#else
 	ca->packetcount += pkts_acked;
+#endif
 
 	if (ca->packetcount >= tp->snd_cwnd - (ca->alpha >> 7 ? : 1) &&
 	    now - ca->lasttime >= ca->minRTT &&

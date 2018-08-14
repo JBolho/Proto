@@ -18,6 +18,7 @@
 
 #include "cpuidle.h"
 
+/*lint -e421*/
 static unsigned int sysfs_switch;
 static int __init cpuidle_sysfs_setup(char *unused)
 {
@@ -645,3 +646,4 @@ void cpuidle_remove_sysfs(struct cpuidle_device *dev)
 	wait_for_completion(&kdev->kobj_unregister);
 	kfree(kdev);
 }
+/*lint +e421*/

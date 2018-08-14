@@ -73,12 +73,19 @@ struct blk_mq_tag_set {
 	int			numa_node;
 	unsigned int		timeout;
 	unsigned int		flags;		/* BLK_MQ_F_* */
+
+	unsigned int 		high_prio_tags;
+	unsigned int 		hisi_mq_flags;
+
 	void			*driver_data;
 
 	struct blk_mq_tags	**tags;
 
 	struct mutex		tag_list_lock;
 	struct list_head	tag_list;
+
+	struct blk_lld_func lld_func;
+
 };
 
 struct blk_mq_queue_data {
@@ -96,6 +103,15 @@ typedef int (init_request_fn)(void *, struct request *, unsigned int,
 		unsigned int, unsigned int);
 typedef void (exit_request_fn)(void *, struct request *, unsigned int,
 		unsigned int);
+
+#ifdef CONFIG_HISI_BLK_MQ
+struct blkdev_statistics_info;
+struct blk_dispatch_decision_para;
+typedef int (direct_flush_fn)(struct request_queue *, int);
+typedef void (queue_statistics_fn)(struct request_queue *,struct blkdev_statistics_info*);
+typedef int (queue_io_wait_fn)(struct blk_dispatch_decision_para *,
+			int (*)(struct blk_dispatch_decision_para *));
+#endif
 
 typedef void (busy_iter_fn)(struct blk_mq_hw_ctx *, struct request *, void *,
 		bool);
@@ -151,6 +167,7 @@ enum {
 	BLK_MQ_RQ_QUEUE_OK	= 0,	/* queued fine */
 	BLK_MQ_RQ_QUEUE_BUSY	= 1,	/* requeue IO for later */
 	BLK_MQ_RQ_QUEUE_ERROR	= 2,	/* end IO with error */
+	BLK_MQ_RQ_QUEUE_IDLE_PENDING = 3,
 
 	BLK_MQ_F_SHOULD_MERGE	= 1 << 0,
 	BLK_MQ_F_TAG_SHARED	= 1 << 1,
@@ -237,6 +254,7 @@ void blk_mq_all_tag_busy_iter(struct blk_mq_tags *tags, busy_tag_iter_fn *fn,
 void blk_mq_freeze_queue(struct request_queue *q);
 void blk_mq_unfreeze_queue(struct request_queue *q);
 void blk_mq_freeze_queue_start(struct request_queue *q);
+void blk_mq_shutdown_freeze_tagset(struct blk_mq_tag_set *tag_set);
 
 /*
  * Driver command data is immediately after the request. So subtract request

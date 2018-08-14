@@ -50,14 +50,18 @@ static u8 usb_bos_descriptor [] = {
 	0x00,				/* bU1DevExitLat, set later. */
 	0x00, 0x00,			/* __le16 bU2DevExitLat, set later. */
 	/* Second device capability, SuperSpeedPlus */
-	0x0c,				/* bLength 12, will be adjusted later */
+	0x1c,				/* bLength 28, will be adjusted later */
 	USB_DT_DEVICE_CAPABILITY,	/* Device Capability */
 	USB_SSP_CAP_TYPE,		/* bDevCapabilityType SUPERSPEED_PLUS */
 	0x00,				/* bReserved 0 */
-	0x00, 0x00, 0x00, 0x00,		/* bmAttributes, get from xhci psic */
-	0x00, 0x00,			/* wFunctionalitySupport */
+	0x23, 0x00, 0x00, 0x00,		/* bmAttributes, SSAC=3 SSIC=1 */
+	0x01, 0x00,			/* wFunctionalitySupport */
 	0x00, 0x00,			/* wReserved 0 */
-	/* Sublink Speed Attributes are added in xhci_create_usb3_bos_desc() */
+	/* Default Sublink Speed Attributes, overwrite if custom PSI exists */
+	0x34, 0x00, 0x05, 0x00,		/* 5Gbps, symmetric, rx, ID = 4 */
+	0xb4, 0x00, 0x05, 0x00,		/* 5Gbps, symmetric, tx, ID = 4 */
+	0x35, 0x40, 0x0a, 0x00,		/* 10Gbps, SSP, symmetric, rx, ID = 5 */
+	0xb5, 0x40, 0x0a, 0x00,		/* 10Gbps, SSP, symmetric, tx, ID = 5 */
 };
 
 static int xhci_create_usb3_bos_desc(struct xhci_hcd *xhci, char *buf,
@@ -72,10 +76,14 @@ static int xhci_create_usb3_bos_desc(struct xhci_hcd *xhci, char *buf,
 	ssp_cap_size = sizeof(usb_bos_descriptor) - desc_size;
 
 	/* does xhci support USB 3.1 Enhanced SuperSpeed */
-	if (xhci->usb3_rhub.min_rev >= 0x01 && xhci->usb3_rhub.psi_uid_count) {
-		/* two SSA entries for each unique PSI ID, one RX and one TX */
-		ssa_count = xhci->usb3_rhub.psi_uid_count * 2;
-		ssa_size = ssa_count * sizeof(u32);
+	if (xhci->usb3_rhub.min_rev >= 0x01) {
+		/* does xhci provide a PSI table for SSA speed attributes? */
+		if (xhci->usb3_rhub.psi_count) {
+			/* two SSA entries for each unique PSI ID, RX and TX */
+			ssa_count = xhci->usb3_rhub.psi_uid_count * 2;
+			ssa_size = ssa_count * sizeof(u32);
+			ssp_cap_size -= 16; /* skip copying the default SSA */
+		}
 		desc_size += ssp_cap_size;
 		usb3_1 = true;
 	}
@@ -102,7 +110,8 @@ static int xhci_create_usb3_bos_desc(struct xhci_hcd *xhci, char *buf,
 		put_unaligned_le16(HCS_U2_LATENCY(temp), &buf[13]);
 	}
 
-	if (usb3_1) {
+	/* If PSI table exists, add the custom speed attributes from it */
+	if (usb3_1 && xhci->usb3_rhub.psi_count) {
 		u32 ssp_cap_base, bm_attrib, psi;
 		int offset;
 
@@ -348,7 +357,7 @@ int xhci_find_slot_id_by_port(struct usb_hcd *hcd, struct xhci_hcd *xhci,
 
 	slot_id = 0;
 	for (i = 0; i < MAX_HC_SLOTS; i++) {
-		if (!xhci->devs[i])
+		if (!xhci->devs[i] || !xhci->devs[i]->udev)
 			continue;
 		speed = xhci->devs[i]->udev->speed;
 		if (((speed >= USB_SPEED_SUPER) == (hcd->speed >= HCD_USB3))
@@ -819,7 +828,6 @@ static u32 xhci_get_port_status(struct usb_hcd *hcd,
 		clear_bit(wIndex, &bus_state->resuming_ports);
 	}
 
-
 	if ((raw_port_status & PORT_PLS_MASK) == XDEV_U0 &&
 	    (raw_port_status & PORT_POWER)) {
 		if (bus_state->suspended_ports & (1 << wIndex)) {
@@ -877,6 +885,7 @@ int xhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 	u16 link_state = 0;
 	u16 wake_mask = 0;
 	u16 timeout = 0;
+	u16 test_mode = 0;
 
 	max_ports = xhci_get_ports(hcd, &port_array);
 	bus_state = &xhci->bus_state[hcd_index(hcd)];
@@ -946,6 +955,8 @@ int xhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		}
 		break;
 	case SetPortFeature:
+		/* The MSB of wIndex is the TEST Mode */
+		test_mode = (wIndex & 0xff00) >> 8;
 		if (wValue == USB_PORT_FEAT_LINK_STATE)
 			link_state = (wIndex & 0xff00) >> 3;
 		if (wValue == USB_PORT_FEAT_REMOTE_WAKE_MASK)
@@ -1089,6 +1100,15 @@ int xhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 			spin_lock_irqsave(&xhci->lock, flags);
 			break;
 		case USB_PORT_FEAT_RESET:
+#ifdef CONFIG_USB_DWC3_KIRIN970
+			xhci_info(xhci, "disable port before reset it\n");
+			xhci_disable_port(hcd, xhci, wIndex,
+					port_array[wIndex], temp);
+
+			temp = readl(port_array[wIndex]);
+			temp = xhci_port_state_to_neutral(temp);
+#endif
+
 			temp = (temp | PORT_RESET);
 			writel(temp, port_array[wIndex]);
 
@@ -1125,6 +1145,23 @@ int xhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 			temp |= PORT_U2_TIMEOUT(timeout);
 			writel(temp, port_array[wIndex] + PORTPMSC);
 			break;
+		case USB_PORT_FEAT_TEST:
+			slot_id = xhci_find_slot_id_by_port(hcd, xhci,
+					wIndex + 1);
+			if (test_mode && test_mode <= 5) {
+				/* unlock to execute stop endpoint commands */
+				spin_unlock_irqrestore(&xhci->lock, flags);
+				xhci_stop_device(xhci, slot_id, 1);
+				spin_lock_irqsave(&xhci->lock, flags);
+				xhci_halt(xhci);
+
+				temp = readl(port_array[wIndex] + PORTPMSC);
+				temp |= test_mode << 28;
+				writel(temp, port_array[wIndex] + PORTPMSC);
+			} else {
+				goto error;
+			}
+			break;
 		default:
 			goto error;
 		}
@@ -1157,7 +1194,7 @@ int xhci_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 				xhci_set_link_state(xhci, port_array, wIndex,
 							XDEV_RESUME);
 				spin_unlock_irqrestore(&xhci->lock, flags);
-				msleep(20);
+				msleep(USB_RESUME_TIMEOUT);
 				spin_lock_irqsave(&xhci->lock, flags);
 				xhci_set_link_state(xhci, port_array, wIndex,
 							XDEV_U0);
@@ -1401,7 +1438,7 @@ int xhci_bus_resume(struct usb_hcd *hcd)
 
 	if (need_usb2_u3_exit) {
 		spin_unlock_irqrestore(&xhci->lock, flags);
-		msleep(20);
+		msleep(USB_RESUME_TIMEOUT);
 		spin_lock_irqsave(&xhci->lock, flags);
 	}
 

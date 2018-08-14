@@ -592,7 +592,9 @@ out:
 	return rc;
 }
 
+/*lint -e750 -esym(750,*)*/
 #define ECRYPTFS_MAX_SCATTERLIST_LEN 4
+/*lint -e750 +esym(750,*)*/
 
 /**
  * ecryptfs_init_crypt_ctx

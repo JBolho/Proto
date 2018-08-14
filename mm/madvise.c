@@ -104,7 +104,7 @@ static long madvise_behavior(struct vm_area_struct *vma,
 	pgoff = vma->vm_pgoff + ((start - vma->vm_start) >> PAGE_SHIFT);
 	*prev = vma_merge(mm, *prev, start, end, new_flags, vma->anon_vma,
 			  vma->vm_file, pgoff, vma_policy(vma),
-			  vma->vm_userfaultfd_ctx);
+			  vma->vm_userfaultfd_ctx, vma_get_anon_name(vma));
 	if (*prev) {
 		vma = *prev;
 		goto success;
@@ -252,6 +252,7 @@ static long madvise_willneed(struct vm_area_struct *vma,
 		end = vma->vm_end;
 	end = ((end - vma->vm_start) >> PAGE_SHIFT) + vma->vm_pgoff;
 
+	pgcache_log_path(BIT_READAHEAD_SYSCALL_DUMP, &(file->f_path), "syscall madvise64(willneed)");
 	force_page_cache_readahead(file->f_mapping, file, start, end - start);
 	return 0;
 }
@@ -324,6 +325,8 @@ static long madvise_remove(struct vm_area_struct *vma,
 	 */
 	get_file(f);
 	up_read(&current->mm->mmap_sem);
+
+	pgcache_log_path(BIT_MADVISE_SYSCALL_DUMP, &(f->f_path), "syscall madvise64(remove)");
 	error = vfs_fallocate(f,
 				FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
 				offset, end - start);
@@ -466,6 +469,9 @@ SYSCALL_DEFINE3(madvise, unsigned long, start, size_t, len_in, int, behavior)
 	int write;
 	size_t len;
 	struct blk_plug plug;
+
+	pgcache_log(BIT_MADVISE_SYSCALL_DUMP, "syscall madvise64(start:%ld, len:%d, behavior:%d)",
+			start, len_in, behavior);
 
 #ifdef CONFIG_MEMORY_FAILURE
 	if (behavior == MADV_HWPOISON || behavior == MADV_SOFT_OFFLINE)

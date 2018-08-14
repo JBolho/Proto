@@ -26,6 +26,9 @@ static struct wakeup_source *autosleep_ws;
 static void try_to_suspend(struct work_struct *work)
 {
 	unsigned int initial_count, final_count;
+#ifdef CONFIG_HW_PTM
+	pr_err("entry try_to_suspend\n");
+#endif
 
 	if (!pm_get_wakeup_count(&initial_count, true))
 		goto out;

@@ -133,6 +133,10 @@ static unsigned int pcpu_high_unit_cpu __read_mostly;
 /* the address of the first chunk which starts with the kernel static area */
 void *pcpu_base_addr __read_mostly;
 EXPORT_SYMBOL_GPL(pcpu_base_addr);
+#ifdef CONFIG_HISI_KERNELDUMP
+int pcpu_base_size __read_mostly;
+EXPORT_SYMBOL_GPL(pcpu_base_size);
+#endif
 
 static const int *pcpu_unit_map __read_mostly;		/* cpu -> unit */
 const unsigned long *pcpu_unit_offsets __read_mostly;	/* cpu -> unit offset */
@@ -1012,8 +1016,11 @@ area_found:
 		mutex_unlock(&pcpu_alloc_mutex);
 	}
 
-	if (chunk != pcpu_reserved_chunk)
+	if (chunk != pcpu_reserved_chunk) {
+		spin_lock_irqsave(&pcpu_lock, flags);
 		pcpu_nr_empty_pop_pages -= occ_pages;
+		spin_unlock_irqrestore(&pcpu_lock, flags);
+	}
 
 	if (pcpu_nr_empty_pop_pages < PCPU_EMPTY_POP_PAGES_LOW)
 		pcpu_schedule_balance_work();
@@ -1713,6 +1720,9 @@ int __init pcpu_setup_first_chunk(const struct pcpu_alloc_info *ai,
 
 	/* we're done */
 	pcpu_base_addr = base_addr;
+#ifdef CONFIG_HISI_KERNELDUMP
+	pcpu_base_size = size_sum;
+#endif
 	return 0;
 }
 

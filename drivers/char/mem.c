@@ -30,6 +30,13 @@
 
 #include <linux/uaccess.h>
 
+#ifdef CONFIG_HW_MMC_MAINTENANCE_CMD
+extern const struct file_operations mmc_cmd_fops;
+#endif
+#ifdef CONFIG_HW_MMC_MAINTENANCE_DATA
+extern const struct file_operations mmc_data_fops;
+#endif
+
 #ifdef CONFIG_IA64
 # include <linux/efi.h>
 #endif
@@ -321,6 +328,11 @@ static const struct vm_operations_struct mmap_mem_ops = {
 static int mmap_mem(struct file *file, struct vm_area_struct *vma)
 {
 	size_t size = vma->vm_end - vma->vm_start;
+	phys_addr_t offset = (phys_addr_t)vma->vm_pgoff << PAGE_SHIFT;
+
+	/* It's illegal to wrap around the end of the physical address space. */
+	if (offset + (phys_addr_t)size - 1 < offset)
+		return -EINVAL;
 
 	if (!valid_mmap_phys_addr_range(vma->vm_pgoff, size))
 		return -EINVAL;
@@ -801,6 +813,12 @@ static const struct memdev {
 	 [9] = { "urandom", 0666, &urandom_fops, 0 },
 #ifdef CONFIG_PRINTK
 	[11] = { "kmsg", 0644, &kmsg_fops, 0 },
+#endif
+#ifdef CONFIG_HW_MMC_MAINTENANCE_CMD
+	[12] = { "mmc_cmd", 0664, &mmc_cmd_fops, 0 },
+#endif
+#ifdef CONFIG_HW_MMC_MAINTENANCE_DATA
+	[13] = { "mmc_data", 0664, &mmc_data_fops, 0 },
 #endif
 };
 

@@ -160,6 +160,11 @@ int usb_gadget_ep_match_desc(struct usb_gadget *gadget,
 	u16		max;
 	int		num_req_streams = 0;
 
+#ifdef CONFIG_HISI_DEBUG_FS
+	if (ep->fake_claimed)
+		return 0;
+#endif
+
 	/* endpoint already claimed? */
 	if (ep->claimed)
 		return 0;
@@ -446,7 +451,13 @@ static void usb_gadget_remove_driver(struct usb_udc *udc)
 	kobject_uevent(&udc->dev.kobj, KOBJ_CHANGE);
 
 	usb_gadget_disconnect(udc->gadget);
+#ifdef CONFIG_HISI_USB_CONFIGFS
+	udc->gadget->is_removing_driver = 1;
+#endif
 	udc->driver->disconnect(udc->gadget);
+#ifdef CONFIG_HISI_USB_CONFIGFS
+	udc->gadget->is_removing_driver = 0;
+#endif
 	udc->driver->unbind(udc->gadget);
 	usb_gadget_udc_stop(udc);
 
@@ -506,6 +517,10 @@ static int udc_bind_to_driver(struct usb_udc *udc, struct usb_gadget_driver *dri
 		driver->unbind(udc->gadget);
 		goto err1;
 	}
+
+#ifdef CONFIG_HISI_USB_CONFIGFS
+	udc->gadget->is_removing_driver = 0;
+#endif
 	usb_udc_connect_control(udc);
 
 	kobject_uevent(&udc->dev.kobj, KOBJ_CHANGE);

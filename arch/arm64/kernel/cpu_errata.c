@@ -20,26 +20,88 @@
 #include <asm/cpu.h>
 #include <asm/cputype.h>
 #include <asm/cpufeature.h>
+#include <linux/percpu.h>
+#include <linux/init.h>
+#include <linux/stop_machine.h>
 
-#define MIDR_CORTEX_A53 MIDR_CPU_PART(ARM_CPU_IMP_ARM, ARM_CPU_PART_CORTEX_A53)
-#define MIDR_CORTEX_A57 MIDR_CPU_PART(ARM_CPU_IMP_ARM, ARM_CPU_PART_CORTEX_A57)
-#define MIDR_THUNDERX	MIDR_CPU_PART(ARM_CPU_IMP_CAVIUM, CAVIUM_CPU_PART_THUNDERX)
+typedef void (*bp_hardening_cb_t)(void);
 
-#define CPU_MODEL_MASK (MIDR_IMPLEMENTOR_MASK | MIDR_PARTNUM_MASK | \
-			MIDR_ARCHITECTURE_MASK)
+struct bp_hardening_data {
+	bp_hardening_cb_t	fn;
+};
+
+DECLARE_PER_CPU_READ_MOSTLY(struct bp_hardening_data, bp_hardening_data);
+
+static struct bp_hardening_data *arm64_get_bp_hardening_data(void)
+{
+	return this_cpu_ptr(&bp_hardening_data);
+}
+
+void arm64_apply_bp_hardening(void)
+{
+	struct bp_hardening_data *d;
+
+	d = arm64_get_bp_hardening_data();
+	if (d->fn)
+		d->fn();
+}
 
 static bool __maybe_unused
 is_affected_midr_range(const struct arm64_cpu_capabilities *entry)
 {
-	u32 midr = read_cpuid_id();
-
-	if ((midr & CPU_MODEL_MASK) != entry->midr_model)
-		return false;
-
-	midr &= MIDR_REVISION_MASK | MIDR_VARIANT_MASK;
-
-	return (midr >= entry->midr_range_min && midr <= entry->midr_range_max);
+	return MIDR_IS_CPU_MODEL_RANGE(read_cpuid_id(), entry->midr_model,
+				       entry->midr_range_min,
+				       entry->midr_range_max);
 }
+
+#include <asm/mmu.h>
+#include <asm/mmu_context.h>
+#include <asm/cacheflush.h>
+
+DEFINE_PER_CPU_READ_MOSTLY(struct bp_hardening_data, bp_hardening_data);
+
+static void  install_bp_hardening_cb(bp_hardening_cb_t fn)
+{
+	__this_cpu_write(bp_hardening_data.fn, fn);
+}
+
+#include <uapi/linux/psci.h>
+#include <linux/arm-smccc.h>
+#include <linux/psci.h>
+
+#ifdef CONFIG_HARDEN_BRANCH_PREDICTOR
+static void call_smc_arch_workaround_1(void)
+{
+	arm_smccc_1_1_smc(ARM_SMCCC_ARCH_WORKAROUND_1, NULL);
+}
+
+static int enable_psci_bp_hardening(void *data)
+{
+	struct arm_smccc_res res;
+	unsigned long part_num = read_cpuid_part_number();
+
+	if ((part_num != ARM_CPU_PART_CORTEX_A72) &&
+			(part_num != ARM_CPU_PART_CORTEX_A73)) {
+		install_bp_hardening_cb(NULL);
+		return 0;
+	}
+
+	arm_smccc_1_1_smc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
+			  ARM_SMCCC_ARCH_WORKAROUND_1, &res);
+	if (res.a0)
+		return 0;
+
+	install_bp_hardening_cb(call_smc_arch_workaround_1);
+	return 0;
+}
+#else
+static int enable_psci_bp_hardening(void *data)
+{
+	install_bp_hardening_cb(NULL);
+
+	return 0;
+}
+#endif /* CONFIG_HARDEN_BRANCH_PREDICTOR */
 
 #define MIDR_RANGE(model, min, max) \
 	.matches = is_affected_midr_range, \
@@ -117,3 +179,10 @@ void check_local_cpu_errata(void)
 {
 	update_cpu_capabilities(arm64_errata, "enabling workaround for");
 }
+
+int __init psci_bp_hardening_workarounds_init(void)
+{
+	stop_machine(enable_psci_bp_hardening, NULL, cpu_present_mask);
+	return 0;
+}
+late_initcall(psci_bp_hardening_workarounds_init);

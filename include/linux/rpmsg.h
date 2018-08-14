@@ -37,9 +37,11 @@
 
 #include <linux/types.h>
 #include <linux/device.h>
+#include <linux/platform_device.h>
 #include <linux/mod_devicetable.h>
 #include <linux/kref.h>
 #include <linux/mutex.h>
+#include <linux/of_gpio.h>
 
 /* The feature bitmap for virtio rpmsg */
 #define VIRTIO_RPMSG_F_NS	0 /* RP supports name service notifications */
@@ -96,6 +98,7 @@ enum rpmsg_ns_flags {
 #define RPMSG_ADDR_ANY		0xFFFFFFFF
 
 struct virtproc_info;
+struct scatterlist;
 
 /**
  * rpmsg_channel - devices that belong to the rpmsg bus are called channels

@@ -6,7 +6,9 @@
 #include <linux/bio.h>
 #include <linux/blkdev.h>
 #include <linux/scatterlist.h>
-
+#include <linux/fscrypto.h>
+#include <trace/events/block.h>
+#include "hisi-blk-mq.h"
 #include "blk.h"
 
 static struct bio *blk_bio_discard_split(struct request_queue *q,
@@ -205,10 +207,16 @@ void blk_queue_split(struct request_queue *q, struct bio **bio,
 	bio_set_flag(res, BIO_SEG_VALID);
 
 	if (split) {
+	#ifdef HISI_BLK_FTRACE_ENABLE
+		trace_blk_mq_debug(__func__,"bio split");
+	#endif
 		/* there isn't chance to merge the splitted bio */
 		split->bi_rw |= REQ_NOMERGE;
-
 		bio_chain(split, *bio);
+	#ifdef CONFIG_HISI_BLK_CORE
+		blk_bio_endio_in_count_check(*bio);
+		blk_bio_in_count_set(q,split);
+	#endif
 		generic_make_request(*bio);
 		*bio = split;
 	}
@@ -225,17 +233,17 @@ static unsigned int __blk_recalc_rq_segments(struct request_queue *q,
 	struct bio *fbio, *bbio;
 	struct bvec_iter iter;
 
-	if (!bio)
+	if (unlikely(!bio))
 		return 0;
 
 	/*
 	 * This should probably be returning 0, but blk_add_request_payload()
 	 * (Christoph!!!!)
 	 */
-	if (bio->bi_rw & REQ_DISCARD)
+	if (unlikely(bio->bi_rw & REQ_DISCARD))/*[false alarm]*/
 		return 1;
 
-	if (bio->bi_rw & REQ_WRITE_SAME)
+	if (unlikely(bio->bi_rw & REQ_WRITE_SAME))
 		return 1;
 
 	fbio = bio;
@@ -248,7 +256,7 @@ static unsigned int __blk_recalc_rq_segments(struct request_queue *q,
 			 * If SG merging is disabled, each bio vector is
 			 * a segment
 			 */
-			if (no_sg_merge)
+			if (unlikely(no_sg_merge))
 				goto new_segment;
 
 			if (prev && cluster) {
@@ -299,13 +307,13 @@ void blk_recount_segments(struct request_queue *q, struct bio *bio)
 	unsigned short seg_cnt;
 
 	/* estimate segment number by bi_vcnt for non-cloned bio */
-	if (bio_flagged(bio, BIO_CLONED))
+	if (unlikely(bio_flagged(bio, BIO_CLONED)))
 		seg_cnt = bio_segments(bio);
 	else
 		seg_cnt = bio->bi_vcnt;
 
-	if (test_bit(QUEUE_FLAG_NO_SG_MERGE, &q->queue_flags) &&
-			(seg_cnt < queue_max_segments(q)))
+	if (unlikely(test_bit(QUEUE_FLAG_NO_SG_MERGE, &q->queue_flags) &&
+			(seg_cnt < queue_max_segments(q))))
 		bio->bi_phys_segments = seg_cnt;
 	else {
 		struct bio *nxt = bio->bi_next;
@@ -663,6 +671,60 @@ static void blk_account_io_merge(struct request *req)
 	}
 }
 
+#ifdef CONFIG_HISI_BLK_INLINE_CRYPTO
+static int blk_bio_key_compare(struct request *rq, struct bio *bio)
+{
+	if (!is_blk_queue_support_crypto(rq->q))
+		return true;
+
+	/*
+	 * check if both the bio->key & last merged request->key
+	 * do not exist, wo shall tell block that this bio may merge to the rq.
+	 */
+	if (!bio->ci_key && !rq->ci_key)
+		return true;
+
+	/*
+	 * check if the bio->key or last merged request->key
+	 * does not exist, but the other's was existing,
+	 * wo shall tell block that the bio should not be merged to the rq.
+	 */
+	if (!bio->ci_key || !rq->ci_key)
+		return false;
+
+	if (bio->ci_key_len != rq->ci_key_len)
+		return false;
+
+	if (bio->ci_key_len != FS_AES_256_XTS_KEY_SIZE) {
+		pr_err("[%s]key len not 64\n", __func__);
+		//BUG_ON(1);
+	}
+
+	if (bio->ci_key == rq->ci_key) {
+		struct bio *prev = rq->biotail;
+		int ret;
+
+		ret = blk_try_merge(rq, bio);
+		switch (ret) {
+		case ELEVATOR_BACK_MERGE:
+			if (prev->index + prev->bi_vcnt != bio->index)
+				return false;
+			break;
+		case ELEVATOR_FRONT_MERGE:
+			if (bio->index + bio->bi_vcnt != rq->bio->index)
+				return false;
+			break;
+		default:
+			return false;
+		}
+
+		return true;
+	}
+
+	return false;
+}
+#endif
+
 /*
  * Has to be called with the request spinlock acquired
  */
@@ -699,6 +761,15 @@ static int attempt_merge(struct request_queue *q, struct request *req,
 	if (!ll_merge_requests_fn(q, req, next))
 		return 0;
 
+#ifdef CONFIG_HISI_BLK_INLINE_CRYPTO
+	/*
+	 * check current bio->key to last-merged request key,
+	 * which is submitted only by f2fs file system now.
+	 */
+	if (!blk_bio_key_compare(req, next->bio))
+		return 0;
+#endif
+
 	/*
 	 * If failfast settings disagree or any of the two is already
 	 * a mixed merge, mark both as mixed before proceeding.  This
@@ -725,7 +796,9 @@ static int attempt_merge(struct request_queue *q, struct request *req,
 	req->biotail = next->biotail;
 
 	req->__data_len += blk_rq_bytes(next);
-
+#ifdef CONFIG_HISI_IO_LATENCY_TRACE
+	req_latency_for_merge(req,next);
+#endif
 	elv_merge_requests(q, req, next);
 
 	/*
@@ -776,6 +849,15 @@ bool blk_rq_merge_ok(struct request *rq, struct bio *bio)
 
 	if (!blk_check_merge_flags(rq->cmd_flags, bio->bi_rw))
 		return false;
+
+#ifdef CONFIG_HISI_BLK_INLINE_CRYPTO
+	/*
+	 * check current bio->key to last-merged request key,
+	 * which is submitted only by f2fs file system now.
+	 */
+	if (!blk_bio_key_compare(rq, bio))
+		return false;
+#endif
 
 	/* different data direction or already started, don't merge */
 	if (bio_data_dir(bio) != rq_data_dir(rq))

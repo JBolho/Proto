@@ -60,6 +60,7 @@
 #include <linux/hugetlb.h>
 #include <linux/backing-dev.h>
 #include <linux/page_idle.h>
+#include <linux/hisi/page_tracker.h>
 
 #include <asm/tlbflush.h>
 
@@ -1162,8 +1163,10 @@ void do_page_add_anon_rmap(struct page *page,
 		if (PageTransHuge(page))
 			__inc_zone_page_state(page,
 					      NR_ANON_TRANSPARENT_HUGEPAGES);
+
 		__mod_zone_page_state(page_zone(page), NR_ANON_PAGES,
 				hpage_nr_pages(page));
+		page_tracker_set_type(page, TRACK_ANON, 0);
 	}
 	if (unlikely(PageKsm(page)))
 		return;
@@ -1196,6 +1199,7 @@ void page_add_new_anon_rmap(struct page *page,
 		__inc_zone_page_state(page, NR_ANON_TRANSPARENT_HUGEPAGES);
 	__mod_zone_page_state(page_zone(page), NR_ANON_PAGES,
 			hpage_nr_pages(page));
+	page_tracker_set_type(page, TRACK_ANON, 0);
 	__page_set_anon_rmap(page, vma, address, 1);
 }
 
@@ -1294,7 +1298,7 @@ void page_remove_rmap(struct page *page)
 /*
  * @arg: enum ttu_flags will be passed to this argument
  */
-static int try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
+int try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
 		     unsigned long address, void *arg)
 {
 	struct mm_struct *mm = vma->vm_mm;
@@ -1469,7 +1473,8 @@ static int page_not_mapped(struct page *page)
  * SWAP_FAIL	- the page is unswappable
  * SWAP_MLOCK	- page is mlocked.
  */
-int try_to_unmap(struct page *page, enum ttu_flags flags)
+int try_to_unmap(struct page *page, enum ttu_flags flags,
+		 struct vm_area_struct *target_vma)
 {
 	int ret;
 	struct rmap_walk_control rwc = {
@@ -1477,6 +1482,7 @@ int try_to_unmap(struct page *page, enum ttu_flags flags)
 		.arg = (void *)flags,
 		.done = page_not_mapped,
 		.anon_lock = page_lock_anon_vma_read,
+		.target_vma = target_vma,
 	};
 
 	VM_BUG_ON_PAGE(!PageHuge(page) && PageTransHuge(page), page);
@@ -1579,10 +1585,17 @@ static struct anon_vma *rmap_walk_anon_lock(struct page *page,
 static int rmap_walk_anon(struct page *page, struct rmap_walk_control *rwc)
 {
 	struct anon_vma *anon_vma;
+	unsigned long address;
 	pgoff_t pgoff;
 	struct anon_vma_chain *avc;
 	int ret = SWAP_AGAIN;
+	struct address_space *mapping = page->mapping;
 
+	if (rwc->target_vma) {
+		address = vma_address(page, rwc->target_vma);
+		return try_to_unmap_one(page, rwc->target_vma,
+				        address, rwc->arg);
+	}
 	anon_vma = rmap_walk_anon_lock(page, rwc);
 	if (!anon_vma)
 		return ret;
@@ -1622,6 +1635,7 @@ static int rmap_walk_anon(struct page *page, struct rmap_walk_control *rwc)
  */
 static int rmap_walk_file(struct page *page, struct rmap_walk_control *rwc)
 {
+	unsigned long address;
 	struct address_space *mapping = page->mapping;
 	pgoff_t pgoff;
 	struct vm_area_struct *vma;
@@ -1640,6 +1654,12 @@ static int rmap_walk_file(struct page *page, struct rmap_walk_control *rwc)
 
 	pgoff = page_to_pgoff(page);
 	i_mmap_lock_read(mapping);
+	if (rwc->target_vma) {
+		address = vma_address(page, rwc->target_vma);
+		ret = try_to_unmap_one(page, rwc->target_vma,
+				       address, rwc->arg);
+		goto done;
+	}
 	vma_interval_tree_foreach(vma, &mapping->i_mmap, pgoff, pgoff) {
 		unsigned long address = vma_address(page, vma);
 

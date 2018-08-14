@@ -16,6 +16,10 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 
+#ifdef CONFIG_HUAWEI_SLEEPLOG
+#include <linux/proc_fs.h>
+#endif
+
 #include "power.h"
 
 DEFINE_MUTEX(pm_mutex);
@@ -38,11 +42,18 @@ int unregister_pm_notifier(struct notifier_block *nb)
 }
 EXPORT_SYMBOL_GPL(unregister_pm_notifier);
 
-int pm_notifier_call_chain(unsigned long val)
+int __pm_notifier_call_chain(unsigned long val, int nr_to_call, int *nr_calls)
 {
-	int ret = blocking_notifier_call_chain(&pm_chain_head, val, NULL);
+	int ret;
+
+	ret = __blocking_notifier_call_chain(&pm_chain_head, val, NULL,
+						nr_to_call, nr_calls);
 
 	return notifier_to_errno(ret);
+}
+int pm_notifier_call_chain(unsigned long val)
+{
+	return __pm_notifier_call_chain(val, -1, NULL);
 }
 
 /* If set, devices may be suspended and resumed asynchronously. */
@@ -234,6 +245,18 @@ late_initcall(pm_debugfs_init);
 #endif /* CONFIG_DEBUG_FS */
 
 #endif /* CONFIG_PM_SLEEP */
+
+#ifdef CONFIG_HUAWEI_SLEEPLOG
+static int __init pm_proc_init(void)
+{
+	proc_create("suspend_stats", S_IRUGO,
+			(struct proc_dir_entry *)NULL, &suspend_stats_operations);
+	return 0;
+}
+/*lint -e528 -esym(750,*)*/
+late_initcall(pm_proc_init);
+/*lint -e528 +esym(750,*)*/
+#endif
 
 #ifdef CONFIG_PM_SLEEP_DEBUG
 /*

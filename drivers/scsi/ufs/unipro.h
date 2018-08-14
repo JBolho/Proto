@@ -35,6 +35,15 @@
 #define TX_LCC_SEQUENCER			0x0032
 #define TX_MIN_ACTIVATETIME			0x0033
 #define TX_PWM_G6_G7_SYNC_LENGTH		0x0034
+#define MPHY_TX_FSM_STATE			0x0041
+     #define TX_FSM_DISABLED     0x0
+     #define TX_FSM_HIBERN8      0x1
+     #define TX_FSM_SLEEP        0x2
+     #define TX_FSM_STALL        0x3
+     #define TX_FSM_LS_BURST     0x4
+     #define TX_FSM_HS_BURST     0x5
+     #define TX_FSM_LINE_CFG     0x6
+     #define TX_FSM_LINE_RESET   0x7
 
 /*
  * M-RX Configuration Attributes
@@ -79,6 +88,7 @@
 #define PA_PWRMODE		0x1571
 #define PA_RXGEAR		0x1583
 #define PA_RXTERMINATION	0x1584
+#define PA_SCRAMBLING		0x1585
 #define PA_MAXRXPWMGEAR		0x1586
 #define PA_MAXRXHSGEAR		0x1587
 #define PA_RXHSUNTERMCAP	0x15A5
@@ -195,6 +205,8 @@ enum ufs_hs_gear_tag {
 #define T_PEERBUFFERSPACE	0x4029
 #define T_CREDITSTOSEND		0x402A
 #define T_CPORTMODE		0x402B
+  #define CPORT_APPLICATION 1
+  #define CPORT_UNDER_TEST  2
 #define T_TC0TXMAXSDUSIZE	0x4060
 #define T_TC1TXMAXSDUSIZE	0x4061
 
@@ -205,6 +217,21 @@ enum ufs_hs_gear_tag {
 #ifdef TRUE
 #undef TRUE
 #endif
+
+/* CPort setting */
+#define E2EFC_ON	(1 << 0)
+#define E2EFC_OFF	(0 << 0)
+#define CSD_N_ON	(0 << 1)
+#define CSD_N_OFF	(1 << 1)
+#define CSV_N_ON	(0 << 2)
+#define CSV_N_OFF	(1 << 2)
+#define CPORT_DEF_FLAGS	(CSV_N_OFF | CSD_N_OFF | E2EFC_OFF)
+
+/* CPort connection state */
+enum {
+	CPORT_IDLE = 0,
+	CPORT_CONNECTED,
+};
 
 /* Boolean attribute values */
 enum {

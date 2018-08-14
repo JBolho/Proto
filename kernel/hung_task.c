@@ -17,6 +17,11 @@
 #include <linux/sysctl.h>
 #include <linux/utsname.h>
 #include <trace/events/sched.h>
+#include <linux/sched.h>
+
+#ifdef CONFIG_DETECT_HUAWEI_HUNG_TASK
+#include "huawei_hung_task.h"
+#endif
 
 /*
  * The number of tasks checked:
@@ -64,7 +69,9 @@ static int
 hung_task_panic(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	did_panic = 1;
-
+#ifdef CONFIG_DETECT_HUAWEI_HUNG_TASK
+	fetch_hung_task_panic(did_panic);
+#endif
 	return NOTIFY_DONE;
 }
 
@@ -72,22 +79,23 @@ static struct notifier_block panic_block = {
 	.notifier_call = hung_task_panic,
 };
 
+#ifndef CONFIG_DETECT_HUAWEI_HUNG_TASK
 static void check_hung_task(struct task_struct *t, unsigned long timeout)
 {
 	unsigned long switch_count = t->nvcsw + t->nivcsw;
 
 	/*
-	 * Ensure the task is not frozen.
-	 * Also, skip vfork and any other user process that freezer should skip.
-	 */
+	* Ensure the task is not frozen.
+	* Also, skip vfork and any other user process that freezer should skip.
+	*/
 	if (unlikely(t->flags & (PF_FROZEN | PF_FREEZER_SKIP)))
 	    return;
 
 	/*
-	 * When a freshly created task is scheduled once, changes its state to
-	 * TASK_UNINTERRUPTIBLE without having ever been switched out once, it
-	 * musn't be checked.
-	 */
+	* When a freshly created task is scheduled once, changes its state to
+	* TASK_UNINTERRUPTIBLE without having ever been switched out once, it
+	* musn't be checked.
+	*/
 	if (unlikely(!switch_count))
 		return;
 
@@ -105,9 +113,9 @@ static void check_hung_task(struct task_struct *t, unsigned long timeout)
 		sysctl_hung_task_warnings--;
 
 	/*
-	 * Ok, the task did not get scheduled for more than 2 minutes,
-	 * complain:
-	 */
+	* Ok, the task did not get scheduled for more than 2 minutes,
+	* complain:
+	*/
 	pr_err("INFO: task %s:%d blocked for more than %ld seconds.\n",
 		t->comm, t->pid, timeout);
 	pr_err("      %s %s %.*s\n",
@@ -162,9 +170,9 @@ static void check_hung_uninterruptible_tasks(unsigned long timeout)
 	struct task_struct *g, *t;
 
 	/*
-	 * If the system crashed already then all bets are off,
-	 * do not report extra hung tasks:
-	 */
+	* If the system crashed already then all bets are off,
+	* do not report extra hung tasks:
+	*/
 	if (test_taint(TAINT_DIE) || did_panic)
 		return;
 
@@ -184,6 +192,7 @@ static void check_hung_uninterruptible_tasks(unsigned long timeout)
  unlock:
 	rcu_read_unlock();
 }
+#endif
 
 static unsigned long timeout_jiffies(unsigned long timeout)
 {
@@ -206,7 +215,9 @@ int proc_dohung_task_timeout_secs(struct ctl_table *table, int write,
 		goto out;
 
 	wake_up_process(watchdog_task);
-
+#ifdef CONFIG_DETECT_HUAWEI_HUNG_TASK
+	fetch_task_timeout_secs(sysctl_hung_task_timeout_secs);
+#endif
  out:
 	return ret;
 }
@@ -227,15 +238,24 @@ static int watchdog(void *dummy)
 	set_user_nice(current, 0);
 
 	for ( ; ; ) {
+#ifdef CONFIG_DETECT_HUAWEI_HUNG_TASK
+		unsigned long timeout = HEARTBEAT_TIME;
+
+		while (schedule_timeout_interruptible(timeout_jiffies(timeout)))
+			timeout = HEARTBEAT_TIME;
+#else
 		unsigned long timeout = sysctl_hung_task_timeout_secs;
 
 		while (schedule_timeout_interruptible(timeout_jiffies(timeout)))
 			timeout = sysctl_hung_task_timeout_secs;
-
+#endif
 		if (atomic_xchg(&reset_hung_task, 0))
 			continue;
-
+#ifdef CONFIG_DETECT_HUAWEI_HUNG_TASK
+		check_hung_tasks_proposal(timeout);
+#else
 		check_hung_uninterruptible_tasks(timeout);
+#endif
 	}
 
 	return 0;
@@ -243,6 +263,13 @@ static int watchdog(void *dummy)
 
 static int __init hung_task_init(void)
 {
+#ifdef CONFIG_DETECT_HUAWEI_HUNG_TASK
+	int ret = 0;
+
+	ret = create_sysfs_hungtask();
+	if (ret)
+		pr_err("hungtask: create_sysfs_hungtask fail.\n");
+#endif
 	atomic_notifier_chain_register(&panic_notifier_list, &panic_block);
 	watchdog_task = kthread_run(watchdog, NULL, "khungtaskd");
 

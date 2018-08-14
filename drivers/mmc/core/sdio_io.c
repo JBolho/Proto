@@ -76,7 +76,7 @@ int sdio_enable_func(struct sdio_func *func)
 	ret = mmc_io_rw_direct(func->card, 1, 0, SDIO_CCCR_IOEx, reg, NULL);
 	if (ret)
 		goto err;
-
+		
 	timeout = jiffies + msecs_to_jiffies(func->enable_timeout);
 
 	while (1) {
@@ -121,7 +121,7 @@ int sdio_disable_func(struct sdio_func *func)
 	if (ret)
 		goto err;
 
-	reg &= ~(1 << func->num);
+	reg &= ~(1 << func->num);/*lint !e502*/
 
 	ret = mmc_io_rw_direct(func->card, 1, 0, SDIO_CCCR_IOEx, reg, NULL);
 	if (ret)
@@ -336,7 +336,7 @@ static int sdio_io_rw_ext_helper(struct sdio_func *func, int write,
 
 	/* Write the remainder using byte mode. */
 	while (remainder > 0) {
-		size = min(remainder, sdio_max_byte_size(func));
+		size = min(remainder, sdio_max_byte_size(func));/*lint !e666*/
 
 		/* Indicate byte mode by setting "blocks" = 0 */
 		ret = mmc_io_rw_extended(func->card, write, func->num, addr,
@@ -382,6 +382,39 @@ u8 sdio_readb(struct sdio_func *func, unsigned int addr, int *err_ret)
 	return val;
 }
 EXPORT_SYMBOL_GPL(sdio_readb);
+
+/**
+ *	sdio_readb_ext - read a single byte from a SDIO function
+ *	@func: SDIO function to access
+ *	@addr: address to read
+ *	@err_ret: optional status value from transfer
+ *	@in: value to add to argument
+ *
+ *	Reads a single byte from the address space of a given SDIO
+ *	function. If there is a problem reading the address, 0xff
+ *	is returned and @err_ret will contain the error code.
+ */
+unsigned char sdio_readb_ext(struct sdio_func *func, unsigned int addr,
+	int *err_ret, unsigned in)
+{
+	int ret;
+	unsigned char val;
+
+	BUG_ON(!func);
+
+	if (err_ret)
+		*err_ret = 0;
+
+	ret = mmc_io_rw_direct(func->card, 0, func->num, addr, (u8)in, &val);
+	if (ret) {
+		if (err_ret)
+			*err_ret = ret;
+		return 0xFF;
+	}
+
+	return val;
+}
+EXPORT_SYMBOL_GPL(sdio_readb_ext);
 
 /**
  *	sdio_writeb - write a single byte to a SDIO function
@@ -711,11 +744,11 @@ int sdio_set_host_pm_flags(struct sdio_func *func, mmc_pm_flag_t flags)
 	BUG_ON(!func->card);
 
 	host = func->card->host;
-
+    
 	if (flags & ~host->pm_caps)
-		return -EINVAL;
-
-	/* function suspend methods are serialized, hence no lock needed */
+	    return -EINVAL;
+ 
+    /* function suspend methods are serialized, hence no lock needed */
 	host->pm_flags |= flags;
 	return 0;
 }

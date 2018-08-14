@@ -342,6 +342,7 @@ void sync_timeline_debug_remove(struct sync_timeline *obj);
 void sync_fence_debug_add(struct sync_fence *fence);
 void sync_fence_debug_remove(struct sync_fence *fence);
 void sync_dump(void);
+char *sync_get_dump_buf(void);
 
 #else
 # define sync_timeline_debug_add(obj)
@@ -349,8 +350,15 @@ void sync_dump(void);
 # define sync_fence_debug_add(fence)
 # define sync_fence_debug_remove(fence)
 # define sync_dump()
+char *sync_get_dump_buf(void)
+{
+	return NULL;
+}
 #endif
 int sync_fence_wake_up_wq(wait_queue_t *curr, unsigned mode,
 				 int wake_flags, void *key);
 
+#ifdef CONFIG_HW_ZEROHUNG
+void fencewp_report(long timeout, bool dump);
+#endif
 #endif /* _LINUX_SYNC_H */

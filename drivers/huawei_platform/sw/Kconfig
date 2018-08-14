@@ -1,0 +1,6 @@
+config HW_SW_DEVICES
+    boolean "single-wire communicate Keyboard with UART in inputhub for CMR Product."
+    default n
+    help
+	  This module adds support for single-wire communicate Keyboard for CMR Product based on
+	  HISI 960 chipset.

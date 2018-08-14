@@ -214,6 +214,9 @@ struct usb_ep {
 	const struct usb_ep_ops	*ops;
 	struct list_head	ep_list;
 	struct usb_ep_caps	caps;
+#ifdef CONFIG_HISI_DEBUG_FS
+	bool			fake_claimed;
+#endif
 	bool			claimed;
 	bool			enabled;
 	unsigned		maxpacket:16;
@@ -646,6 +649,9 @@ struct usb_gadget {
 	unsigned			is_selfpowered:1;
 	unsigned			deactivated:1;
 	unsigned			connected:1;
+	#ifdef CONFIG_HISI_USB_CONFIGFS
+	unsigned	is_removing_driver;
+	#endif
 };
 #define work_to_gadget(w)	(container_of((w), struct usb_gadget, work))
 
@@ -723,6 +729,16 @@ static inline int gadget_is_dualspeed(struct usb_gadget *g)
 static inline int gadget_is_superspeed(struct usb_gadget *g)
 {
 	return g->max_speed >= USB_SPEED_SUPER;
+}
+
+/**
+ * gadget_is_superspeed_plus() - return true if the hardware handles
+ *	superspeed plus
+ * @g: controller that might support superspeed plus
+ */
+static inline int gadget_is_superspeed_plus(struct usb_gadget *g)
+{
+	return g->max_speed >= USB_SPEED_SUPER_PLUS;
 }
 
 /**
@@ -1187,7 +1203,8 @@ struct usb_function;
 int usb_assign_descriptors(struct usb_function *f,
 		struct usb_descriptor_header **fs,
 		struct usb_descriptor_header **hs,
-		struct usb_descriptor_header **ss);
+		struct usb_descriptor_header **ss,
+		struct usb_descriptor_header **ssp);
 void usb_free_all_descriptors(struct usb_function *f);
 
 struct usb_descriptor_header *usb_otg_descriptor_alloc(

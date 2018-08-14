@@ -492,21 +492,17 @@ static int nl80211_prepare_wdev_dump(struct sk_buff *skb,
 {
 	int err;
 
-	rtnl_lock();
-
 	if (!cb->args[0]) {
 		err = nlmsg_parse(cb->nlh, GENL_HDRLEN + nl80211_fam.hdrsize,
 				  nl80211_fam.attrbuf, nl80211_fam.maxattr,
 				  nl80211_policy);
 		if (err)
-			goto out_unlock;
+			return err;
 
 		*wdev = __cfg80211_wdev_from_attrs(sock_net(skb->sk),
 						   nl80211_fam.attrbuf);
-		if (IS_ERR(*wdev)) {
-			err = PTR_ERR(*wdev);
-			goto out_unlock;
-		}
+		if (IS_ERR(*wdev))
+			return PTR_ERR(*wdev);
 		*rdev = wiphy_to_rdev((*wdev)->wiphy);
 		/* 0 is the first index - add 1 to parse only once */
 		cb->args[0] = (*rdev)->wiphy_idx + 1;
@@ -516,10 +512,8 @@ static int nl80211_prepare_wdev_dump(struct sk_buff *skb,
 		struct wiphy *wiphy = wiphy_idx_to_wiphy(cb->args[0] - 1);
 		struct wireless_dev *tmp;
 
-		if (!wiphy) {
-			err = -ENODEV;
-			goto out_unlock;
-		}
+		if (!wiphy)
+			return -ENODEV;
 		*rdev = wiphy_to_rdev(wiphy);
 		*wdev = NULL;
 
@@ -530,21 +524,11 @@ static int nl80211_prepare_wdev_dump(struct sk_buff *skb,
 			}
 		}
 
-		if (!*wdev) {
-			err = -ENODEV;
-			goto out_unlock;
-		}
+		if (!*wdev)
+			return -ENODEV;
 	}
 
 	return 0;
- out_unlock:
-	rtnl_unlock();
-	return err;
-}
-
-static void nl80211_finish_wdev_dump(struct cfg80211_registered_device *rdev)
-{
-	rtnl_unlock();
 }
 
 /* IE validation */
@@ -3812,6 +3796,25 @@ static int nl80211_send_station(struct sk_buff *msg, u32 cmd, u32 portid,
 		    &sinfo->sta_flags))
 		goto nla_put_failure;
 
+#ifdef CONFIG_HW_GET_EXT_SIG
+	if ((sinfo->filled & BIT(NL80211_STA_INFO_NOISE))) {
+		if (nla_put_s32(msg, NL80211_STA_INFO_NOISE, sinfo->noise)) {
+			goto nla_put_failure;
+		}
+	}
+
+	if ((sinfo->filled & BIT(NL80211_STA_INFO_SNR))) {
+		if (nla_put_s32(msg, NL80211_STA_INFO_SNR, sinfo->snr)) {
+			goto nla_put_failure;
+		}
+	}
+
+	if ((sinfo->filled & BIT(NL80211_STA_INFO_CNAHLOAD))) {
+		if (nla_put_s32(msg, NL80211_STA_INFO_CNAHLOAD, sinfo->chload)) {
+			goto nla_put_failure;
+		}
+	}
+#endif
 	PUT_SINFO(T_OFFSET, t_offset, u64);
 	PUT_SINFO(RX_DROP_MISC, rx_dropped_misc, u64);
 	PUT_SINFO(BEACON_RX, rx_beacon, u64);
@@ -3884,9 +3887,10 @@ static int nl80211_dump_station(struct sk_buff *skb,
 	int sta_idx = cb->args[2];
 	int err;
 
+	rtnl_lock();
 	err = nl80211_prepare_wdev_dump(skb, cb, &rdev, &wdev);
 	if (err)
-		return err;
+		goto out_err;
 
 	if (!wdev->netdev) {
 		err = -EINVAL;
@@ -3922,7 +3926,7 @@ static int nl80211_dump_station(struct sk_buff *skb,
 	cb->args[2] = sta_idx;
 	err = skb->len;
  out_err:
-	nl80211_finish_wdev_dump(rdev);
+	rtnl_unlock();
 
 	return err;
 }
@@ -4639,9 +4643,10 @@ static int nl80211_dump_mpath(struct sk_buff *skb,
 	int path_idx = cb->args[2];
 	int err;
 
+	rtnl_lock();
 	err = nl80211_prepare_wdev_dump(skb, cb, &rdev, &wdev);
 	if (err)
-		return err;
+		goto out_err;
 
 	if (!rdev->ops->dump_mpath) {
 		err = -EOPNOTSUPP;
@@ -4675,7 +4680,7 @@ static int nl80211_dump_mpath(struct sk_buff *skb,
 	cb->args[2] = path_idx;
 	err = skb->len;
  out_err:
-	nl80211_finish_wdev_dump(rdev);
+	rtnl_unlock();
 	return err;
 }
 
@@ -4835,9 +4840,10 @@ static int nl80211_dump_mpp(struct sk_buff *skb,
 	int path_idx = cb->args[2];
 	int err;
 
+	rtnl_lock();
 	err = nl80211_prepare_wdev_dump(skb, cb, &rdev, &wdev);
 	if (err)
-		return err;
+		goto out_err;
 
 	if (!rdev->ops->dump_mpp) {
 		err = -EOPNOTSUPP;
@@ -4870,7 +4876,7 @@ static int nl80211_dump_mpp(struct sk_buff *skb,
 	cb->args[2] = path_idx;
 	err = skb->len;
  out_err:
-	nl80211_finish_wdev_dump(rdev);
+	rtnl_unlock();
 	return err;
 }
 
@@ -6084,6 +6090,24 @@ nl80211_parse_sched_scan_plans(struct wiphy *wiphy, int n_plans,
 	return 0;
 }
 
+static int nl80211_abort_scan(struct sk_buff *skb, struct genl_info *info)
+{
+    struct cfg80211_registered_device *rdev = info->user_ptr[0];
+    struct wireless_dev *wdev = info->user_ptr[1];
+
+    if (!rdev->ops->abort_scan)
+        return -EOPNOTSUPP;
+
+    if (rdev->scan_msg)
+        return 0;
+
+    if (!rdev->scan_req)
+        return -ENOENT;
+
+    rdev_abort_scan(rdev, wdev);
+    return 0;
+}
+
 static struct cfg80211_sched_scan_request *
 nl80211_parse_sched_scan(struct wiphy *wiphy, struct wireless_dev *wdev,
 			 struct nlattr **attrs)
@@ -6806,9 +6830,12 @@ static int nl80211_dump_scan(struct sk_buff *skb, struct netlink_callback *cb)
 	int start = cb->args[2], idx = 0;
 	int err;
 
+	rtnl_lock();
 	err = nl80211_prepare_wdev_dump(skb, cb, &rdev, &wdev);
-	if (err)
+	if (err) {
+		rtnl_unlock();
 		return err;
+	}
 
 	wdev_lock(wdev);
 	spin_lock_bh(&rdev->bss_lock);
@@ -6831,7 +6858,7 @@ static int nl80211_dump_scan(struct sk_buff *skb, struct netlink_callback *cb)
 	wdev_unlock(wdev);
 
 	cb->args[2] = idx;
-	nl80211_finish_wdev_dump(rdev);
+	rtnl_unlock();
 
 	return skb->len;
 }
@@ -6915,9 +6942,10 @@ static int nl80211_dump_survey(struct sk_buff *skb, struct netlink_callback *cb)
 	int res;
 	bool radio_stats;
 
+	rtnl_lock();
 	res = nl80211_prepare_wdev_dump(skb, cb, &rdev, &wdev);
 	if (res)
-		return res;
+		goto out_err;
 
 	/* prepare_wdev_dump parsed the attributes */
 	radio_stats = nl80211_fam.attrbuf[NL80211_ATTR_SURVEY_RADIO_STATS];
@@ -6958,13 +6986,17 @@ static int nl80211_dump_survey(struct sk_buff *skb, struct netlink_callback *cb)
 	cb->args[2] = survey_idx;
 	res = skb->len;
  out_err:
-	nl80211_finish_wdev_dump(rdev);
+	rtnl_unlock();
 	return res;
 }
 
 static bool nl80211_valid_wpa_versions(u32 wpa_versions)
 {
 	return !(wpa_versions & ~(NL80211_WPA_VERSION_1 |
+#if defined (CONFIG_BCMDHD) || defined (CONFIG_CONNECTIVITY_HI110X)
+/*WAPI*/
+				NL80211_WAPI_VERSION_1 |	/*lint !e655*/
+#endif
 				  NL80211_WPA_VERSION_2));
 }
 
@@ -9791,6 +9823,9 @@ static int nl80211_set_rekey_data(struct sk_buff *skb, struct genl_info *info)
 	if (err)
 		return err;
 
+	if (!tb[NL80211_REKEY_DATA_REPLAY_CTR] || !tb[NL80211_REKEY_DATA_KEK] ||
+	    !tb[NL80211_REKEY_DATA_KCK])
+		return -EINVAL;
 	if (nla_len(tb[NL80211_REKEY_DATA_REPLAY_CTR]) != NL80211_REPLAY_CTR_LEN)
 		return -ERANGE;
 	if (nla_len(tb[NL80211_REKEY_DATA_KEK]) != NL80211_KEK_LEN)
@@ -10158,17 +10193,13 @@ static int nl80211_prepare_vendor_dump(struct sk_buff *skb,
 	void *data = NULL;
 	unsigned int data_len = 0;
 
-	rtnl_lock();
-
 	if (cb->args[0]) {
 		/* subtract the 1 again here */
 		struct wiphy *wiphy = wiphy_idx_to_wiphy(cb->args[0] - 1);
 		struct wireless_dev *tmp;
 
-		if (!wiphy) {
-			err = -ENODEV;
-			goto out_unlock;
-		}
+		if (!wiphy)
+			return -ENODEV;
 		*rdev = wiphy_to_rdev(wiphy);
 		*wdev = NULL;
 
@@ -10189,13 +10220,11 @@ static int nl80211_prepare_vendor_dump(struct sk_buff *skb,
 			  nl80211_fam.attrbuf, nl80211_fam.maxattr,
 			  nl80211_policy);
 	if (err)
-		goto out_unlock;
+		return err;
 
 	if (!nl80211_fam.attrbuf[NL80211_ATTR_VENDOR_ID] ||
-	    !nl80211_fam.attrbuf[NL80211_ATTR_VENDOR_SUBCMD]) {
-		err = -EINVAL;
-		goto out_unlock;
-	}
+	    !nl80211_fam.attrbuf[NL80211_ATTR_VENDOR_SUBCMD])
+		return -EINVAL;
 
 	*wdev = __cfg80211_wdev_from_attrs(sock_net(skb->sk),
 					   nl80211_fam.attrbuf);
@@ -10204,10 +10233,8 @@ static int nl80211_prepare_vendor_dump(struct sk_buff *skb,
 
 	*rdev = __cfg80211_rdev_from_attrs(sock_net(skb->sk),
 					   nl80211_fam.attrbuf);
-	if (IS_ERR(*rdev)) {
-		err = PTR_ERR(*rdev);
-		goto out_unlock;
-	}
+	if (IS_ERR(*rdev))
+		return PTR_ERR(*rdev);
 
 	vid = nla_get_u32(nl80211_fam.attrbuf[NL80211_ATTR_VENDOR_ID]);
 	subcmd = nla_get_u32(nl80211_fam.attrbuf[NL80211_ATTR_VENDOR_SUBCMD]);
@@ -10220,19 +10247,15 @@ static int nl80211_prepare_vendor_dump(struct sk_buff *skb,
 		if (vcmd->info.vendor_id != vid || vcmd->info.subcmd != subcmd)
 			continue;
 
-		if (!vcmd->dumpit) {
-			err = -EOPNOTSUPP;
-			goto out_unlock;
-		}
+		if (!vcmd->dumpit)
+			return -EOPNOTSUPP;
 
 		vcmd_idx = i;
 		break;
 	}
 
-	if (vcmd_idx < 0) {
-		err = -EOPNOTSUPP;
-		goto out_unlock;
-	}
+	if (vcmd_idx < 0)
+		return -EOPNOTSUPP;
 
 	if (nl80211_fam.attrbuf[NL80211_ATTR_VENDOR_DATA]) {
 		data = nla_data(nl80211_fam.attrbuf[NL80211_ATTR_VENDOR_DATA]);
@@ -10249,9 +10272,6 @@ static int nl80211_prepare_vendor_dump(struct sk_buff *skb,
 
 	/* keep rtnl locked in successful case */
 	return 0;
- out_unlock:
-	rtnl_unlock();
-	return err;
 }
 
 static int nl80211_vendor_cmd_dump(struct sk_buff *skb,
@@ -10266,9 +10286,10 @@ static int nl80211_vendor_cmd_dump(struct sk_buff *skb,
 	int err;
 	struct nlattr *vendor_data;
 
+	rtnl_lock();
 	err = nl80211_prepare_vendor_dump(skb, cb, &rdev, &wdev);
 	if (err)
-		return err;
+		goto out;
 
 	vcmd_idx = cb->args[2];
 	data = (void *)cb->args[3];
@@ -10277,18 +10298,26 @@ static int nl80211_vendor_cmd_dump(struct sk_buff *skb,
 
 	if (vcmd->flags & (WIPHY_VENDOR_CMD_NEED_WDEV |
 			   WIPHY_VENDOR_CMD_NEED_NETDEV)) {
-		if (!wdev)
-			return -EINVAL;
+		if (!wdev) {
+			err = -EINVAL;
+			goto out;
+		}
 		if (vcmd->flags & WIPHY_VENDOR_CMD_NEED_NETDEV &&
-		    !wdev->netdev)
-			return -EINVAL;
+		    !wdev->netdev) {
+			err = -EINVAL;
+			goto out;
+		}
 
 		if (vcmd->flags & WIPHY_VENDOR_CMD_NEED_RUNNING) {
 			if (wdev->netdev &&
-			    !netif_running(wdev->netdev))
-				return -ENETDOWN;
-			if (!wdev->netdev && !wdev->p2p_started)
-				return -ENETDOWN;
+			    !netif_running(wdev->netdev)) {
+				err = -ENETDOWN;
+				goto out;
+			}
+			if (!wdev->netdev && !wdev->p2p_started) {
+				err = -ENETDOWN;
+				goto out;
+			}
 		}
 	}
 
@@ -10948,6 +10977,14 @@ static const struct genl_ops nl80211_ops[] = {
 		.internal_flags = NL80211_FLAG_NEED_WDEV_UP |
 				  NL80211_FLAG_NEED_RTNL,
 	},
+        {
+                .cmd = NL80211_CMD_ABORT_SCAN,
+                .doit = nl80211_abort_scan,
+                .policy = nl80211_policy,
+                .flags = GENL_ADMIN_PERM,
+                .internal_flags = NL80211_FLAG_NEED_WDEV_UP |
+                                  NL80211_FLAG_NEED_RTNL,
+        },
 	{
 		.cmd = NL80211_CMD_GET_SCAN,
 		.policy = nl80211_policy,
@@ -12304,6 +12341,38 @@ void cfg80211_conn_failed(struct net_device *dev, const u8 *mac_addr,
 }
 EXPORT_SYMBOL(cfg80211_conn_failed);
 
+#if (defined (CONFIG_HW_VOWIFI) || defined (CONFIG_HW_ABS))
+void cfg80211_do_drv_private(struct net_device *dev, gfp_t gfp, enum nl80211_commands command)
+{
+	struct wireless_dev *wdev = dev->ieee80211_ptr;
+	struct cfg80211_registered_device *rdev = wiphy_to_rdev(wdev->wiphy);
+	struct sk_buff *msg;
+	void *hdr;
+
+	msg = nlmsg_new(NLMSG_DEFAULT_SIZE, gfp);
+	if (!msg)
+		return;
+
+	hdr = nl80211hdr_put(msg, 0, 0, 0, command);
+	if (!hdr) {
+		nlmsg_free(msg);
+		return;
+	}
+    if (nla_put_u32(msg, NL80211_ATTR_IFINDEX, dev->ifindex))
+		goto nla_put_failure;
+
+	genlmsg_end(msg, hdr);
+	genlmsg_multicast_netns(&nl80211_fam, wiphy_net(&rdev->wiphy), msg, 0,
+				NL80211_MCGRP_REGULATORY, gfp);
+	return;
+
+ nla_put_failure:
+	genlmsg_cancel(msg, hdr);
+	nlmsg_free(msg);
+}
+EXPORT_SYMBOL(cfg80211_do_drv_private);
+#endif
+
 static bool __nl80211_unexpected_frame(struct net_device *dev, u8 cmd,
 				       const u8 *addr, gfp_t gfp)
 {
@@ -13168,13 +13237,17 @@ static int nl80211_netlink_notify(struct notifier_block * nb,
 
 	list_for_each_entry_rcu(rdev, &cfg80211_rdev_list, list) {
 		bool schedule_destroy_work = false;
-		bool schedule_scan_stop = false;
 		struct cfg80211_sched_scan_request *sched_scan_req =
 			rcu_dereference(rdev->sched_scan_req);
 
 		if (sched_scan_req && notify->portid &&
-		    sched_scan_req->owner_nlportid == notify->portid)
-			schedule_scan_stop = true;
+		    sched_scan_req->owner_nlportid == notify->portid) {
+			sched_scan_req->owner_nlportid = 0;
+
+			if (rdev->ops->sched_scan_stop &&
+			    rdev->wiphy.flags & WIPHY_FLAG_SUPPORTS_SCHED_SCAN)
+				schedule_work(&rdev->sched_scan_stop_wk);
+		}
 
 		list_for_each_entry_rcu(wdev, &rdev->wdev_list, list) {
 			cfg80211_mlme_unregister_socket(wdev, notify->portid);
@@ -13205,12 +13278,6 @@ static int nl80211_netlink_notify(struct notifier_block * nb,
 				spin_unlock(&rdev->destroy_list_lock);
 				schedule_work(&rdev->destroy_work);
 			}
-		} else if (schedule_scan_stop) {
-			sched_scan_req->owner_nlportid = 0;
-
-			if (rdev->ops->sched_scan_stop &&
-			    rdev->wiphy.flags & WIPHY_FLAG_SUPPORTS_SCHED_SCAN)
-				schedule_work(&rdev->sched_scan_stop_wk);
 		}
 	}
 

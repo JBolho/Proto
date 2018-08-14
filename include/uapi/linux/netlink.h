@@ -28,9 +28,54 @@
 #define NETLINK_RDMA		20
 #define NETLINK_CRYPTO		21	/* Crypto layer */
 
+#ifdef CONFIG_HW_DPIMARK_MODULE
+#define NETLINK_HW_DPI	25
+#endif
+
+#ifdef CONFIG_CONNECTIVITY_HI110X
+#define NETLINK_WIFI_DFR_HISI   27
+#define NETLINK_WIFI_SDT_HISI   28
+#endif
+
+#ifdef CONFIG_CHR_NETLINK_MODULE
+#define NETLINK_CHR_EVENT_NL  23
+#endif
+#ifdef CONFIG_HW_WIFIPRO
+#define NETLINK_WIFIPRO_EVENT_NL  24
+#endif
+
+
+#ifdef CONFIG_HW_CROSSLAYER_OPT_DBG_MODULE
+#define NETLINK_ASPEN		26
+#endif
+
 #define NETLINK_INET_DIAG	NETLINK_SOCK_DIAG
 
-#define MAX_LINKS 32		
+#ifdef CONFIG_HUAWEI_KSTATE
+#define NETLINK_HW_KSTATE	30	/* kstate send event to user */
+#endif
+
+/*netd communicate with hwfilter */
+#ifdef CONFIG_HW_NETFILTER_MODULE
+#define NETLINK_HW_NF   32
+#endif
+
+#ifdef CONFIG_RIL_NETLINK_MODULE
+#define NETLINK_RIL_EVENT_NL  34
+#endif
+
+#ifdef CONFIG_HUAWEI_EMCOM
+#define NETLINK_EMCOM 35
+#endif
+
+
+#if (defined(CONFIG_HW_CPULOAD_NOTI) || defined(CONFIG_HW_VIP_THREAD) \
+        || defined(CONFIG_HW_IAWARE_THREAD_BOOST))
+#define NETLINK_HW_IAWARE_CPU 33
+#define MAX_LINKS 36
+#else
+#define MAX_LINKS 36
+#endif
 
 struct sockaddr_nl {
 	__kernel_sa_family_t	nl_family;	/* AF_NETLINK	*/
@@ -107,8 +152,10 @@ struct nlmsgerr {
 #define NETLINK_PKTINFO			3
 #define NETLINK_BROADCAST_ERROR		4
 #define NETLINK_NO_ENOBUFS		5
+#ifndef __KERNEL__
 #define NETLINK_RX_RING			6
 #define NETLINK_TX_RING			7
+#endif
 #define NETLINK_LISTEN_ALL_NSID		8
 #define NETLINK_LIST_MEMBERSHIPS	9
 #define NETLINK_CAP_ACK			10
@@ -134,6 +181,7 @@ struct nl_mmap_hdr {
 	__u32		nm_gid;
 };
 
+#ifndef __KERNEL__
 enum nl_mmap_status {
 	NL_MMAP_STATUS_UNUSED,
 	NL_MMAP_STATUS_RESERVED,
@@ -145,6 +193,7 @@ enum nl_mmap_status {
 #define NL_MMAP_MSG_ALIGNMENT		NLMSG_ALIGNTO
 #define NL_MMAP_MSG_ALIGN(sz)		__ALIGN_KERNEL(sz, NL_MMAP_MSG_ALIGNMENT)
 #define NL_MMAP_HDRLEN			NL_MMAP_MSG_ALIGN(sizeof(struct nl_mmap_hdr))
+#endif
 
 #define NET_MAJOR 36		/* Major 36 is reserved for networking 						*/
 

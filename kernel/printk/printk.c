@@ -55,6 +55,14 @@
 #include "console_cmdline.h"
 #include "braille.h"
 
+#ifdef CONFIG_EARLY_PRINTK_DIRECT
+extern void printascii(char *);
+#endif
+
+#ifdef CONFIG_HISI_APANIC
+extern void apanic_console_write(char *s, unsigned c);
+#endif
+
 int console_printk[4] = {
 	CONSOLE_LOGLEVEL_DEFAULT,	/* console_loglevel */
 	MESSAGE_LOGLEVEL_DEFAULT,	/* default_message_loglevel */
@@ -224,6 +232,8 @@ enum log_flags {
 	LOG_CONT	= 8,	/* text is a fragment of a continuation line */
 };
 
+#ifdef CONFIG_HISI_TIME
+#else
 struct printk_log {
 	u64 ts_nsec;		/* timestamp in nanoseconds */
 	u16 len;		/* length of entire record */
@@ -233,6 +243,7 @@ struct printk_log {
 	u8 flags:5;		/* internal record flags */
 	u8 level:3;		/* syslog level */
 };
+#endif
 
 /*
  * The logbuf_lock protects kmsg buffer, indices, counters.  This can be taken
@@ -240,6 +251,13 @@ struct printk_log {
  * console_unlock() or anything else that might wake up a process.
  */
 static DEFINE_RAW_SPINLOCK(logbuf_lock);
+#ifdef CONFIG_HISI_TIME
+raw_spinlock_t *g_logbuf_lock_ex = &logbuf_lock;
+raw_spinlock_t *g_sem_lock_ex = &console_sem.lock;
+#endif
+#ifdef CONFIG_HUAWEI_PRINTK_CTRL
+raw_spinlock_t *g_logbuf_level_lock_ex = &logbuf_lock;
+#endif
 
 #ifdef CONFIG_PRINTK
 DECLARE_WAIT_QUEUE_HEAD(log_wait);
@@ -266,7 +284,11 @@ static enum log_flags console_prev;
 static u64 clear_seq;
 static u32 clear_idx;
 
+#ifdef CONFIG_HISI_TIME
+#define PREFIX_MAX		80
+#else
 #define PREFIX_MAX		32
+#endif
 #define LOG_LINE_MAX		(1024 - PREFIX_MAX)
 
 #define LOG_LEVEL(v)		((v) & 0x07)
@@ -387,7 +409,7 @@ static u32 msg_used_size(u16 text_len, u16 dict_len, u32 *pad_len)
 	u32 size;
 
 	size = sizeof(struct printk_log) + text_len + dict_len;
-	*pad_len = (-size) & (LOG_ALIGN - 1);
+	*pad_len = (-size) & (LOG_ALIGN - 1);/*lint !e501*/
 	size += *pad_len;
 
 	return size;
@@ -428,6 +450,13 @@ static int log_store(int facility, int level,
 	struct printk_log *msg;
 	u32 size, pad_len;
 	u16 trunc_msg_len = 0;
+#ifdef CONFIG_HISI_TIME
+	char tmp_buf[100];
+	u16 tmp_len = 0;
+
+	hisi_log_store_add_time(tmp_buf, sizeof(tmp_buf), &tmp_len);
+	text_len += tmp_len;
+#endif
 
 	/* number of '\0' padding bytes to next message */
 	size = msg_used_size(text_len, dict_len, &pad_len);
@@ -453,7 +482,12 @@ static int log_store(int facility, int level,
 
 	/* fill message */
 	msg = (struct printk_log *)(log_buf + log_next_idx);
+#ifdef CONFIG_HISI_TIME
+	memcpy(log_text(msg), tmp_buf, tmp_len);
+	memcpy(log_text(msg)+tmp_len, text, text_len-tmp_len);
+#else
 	memcpy(log_text(msg), text, text_len);
+#endif
 	msg->text_len = text_len;
 	if (trunc_msg_len) {
 		memcpy(log_text(msg) + text_len, trunc_msg, trunc_msg_len);
@@ -467,11 +501,20 @@ static int log_store(int facility, int level,
 	if (ts_nsec > 0)
 		msg->ts_nsec = ts_nsec;
 	else
+#ifdef CONFIG_HISI_TIME
+		msg->ts_nsec = hisi_getcurtime();
+#else
 		msg->ts_nsec = local_clock();
+#endif
 	memset(log_dict(msg) + dict_len, 0, pad_len);
 	msg->len = size;
 
 	/* insert message */
+#ifdef CONFIG_HISI_APANIC
+	if (msg->level < CONSOLE_LOGLEVEL_DEFAULT)
+		panic_print_msg(msg);
+#endif
+
 	log_next_idx += msg->len;
 	log_next_seq++;
 
@@ -708,7 +751,7 @@ static ssize_t devkmsg_read(struct file *file, char __user *buf,
 				  log_dict(msg), msg->dict_len,
 				  log_text(msg), msg->text_len);
 
-	user->prev = msg->flags;
+	user->prev = msg->flags;/*lint !e64*/
 	user->idx = log_next(user->idx);
 	user->seq++;
 	raw_spin_unlock_irq(&logbuf_lock);
@@ -724,7 +767,7 @@ static ssize_t devkmsg_read(struct file *file, char __user *buf,
 	}
 	ret = len;
 out:
-	mutex_unlock(&user->lock);
+	mutex_unlock(&user->lock);/*lint !e455*/
 	return ret;
 }
 
@@ -786,7 +829,7 @@ static unsigned int devkmsg_poll(struct file *file, poll_table *wait)
 	}
 	raw_spin_unlock_irq(&logbuf_lock);
 
-	return ret;
+	return ret;/*[false alarm]:return */
 }
 
 static int devkmsg_open(struct inode *inode, struct file *file)
@@ -1034,9 +1077,10 @@ static inline void boot_delay_msec(int level)
 }
 #endif
 
-static bool printk_time = IS_ENABLED(CONFIG_PRINTK_TIME);
+static bool printk_time = IS_ENABLED(CONFIG_PRINTK_TIME);/*lint !e1564*/
 module_param_named(time, printk_time, bool, S_IRUGO | S_IWUSR);
-
+#if defined(CONFIG_HISI_TIME)
+#else
 static size_t print_time(u64 ts, char *buf)
 {
 	unsigned long rem_nsec;
@@ -1052,6 +1096,7 @@ static size_t print_time(u64 ts, char *buf)
 	return sprintf(buf, "[%5lu.%06lu] ",
 		       (unsigned long)ts, rem_nsec / 1000);
 }
+#endif
 
 static size_t print_prefix(const struct printk_log *msg, bool syslog, char *buf)
 {
@@ -1059,8 +1104,8 @@ static size_t print_prefix(const struct printk_log *msg, bool syslog, char *buf)
 	unsigned int prefix = (msg->facility << 3) | msg->level;
 
 	if (syslog) {
-		if (buf) {
-			len += sprintf(buf, "<%u>", prefix);
+		if (buf) {/*lint !e421*/
+			len += sprintf(buf, "<%u>", prefix);/*lint !e421*/
 		} else {
 			len += 3;
 			if (prefix > 999)
@@ -1154,7 +1199,7 @@ static int syslog_print(char __user *buf, int size)
 			/* messages are gone, move to first one */
 			syslog_seq = log_first_seq;
 			syslog_idx = log_first_idx;
-			syslog_prev = 0;
+			syslog_prev = 0;/*lint !e64*/
 			syslog_partial = 0;
 		}
 		if (syslog_seq == log_next_seq) {
@@ -1165,12 +1210,12 @@ static int syslog_print(char __user *buf, int size)
 		skip = syslog_partial;
 		msg = log_from_idx(syslog_idx);
 		n = msg_print_text(msg, syslog_prev, true, text,
-				   LOG_LINE_MAX + PREFIX_MAX);
-		if (n - syslog_partial <= size) {
+				   LOG_LINE_MAX + PREFIX_MAX);/*lint !e574*/
+		if (n - syslog_partial <= size) {/*lint !e574*/
 			/* message fits into buffer, move forward */
 			syslog_idx = log_next(syslog_idx);
 			syslog_seq++;
-			syslog_prev = msg->flags;
+			syslog_prev = msg->flags;/*lint !e64*/
 			n -= syslog_partial;
 			syslog_partial = 0;
 		} else if (!len){
@@ -1227,12 +1272,12 @@ static int syslog_print_all(char __user *buf, int size, bool clear)
 		 */
 		seq = clear_seq;
 		idx = clear_idx;
-		prev = 0;
+		prev = 0;/*lint !e64*/
 		while (seq < log_next_seq) {
 			struct printk_log *msg = log_from_idx(idx);
 
 			len += msg_print_text(msg, prev, true, NULL, 0);
-			prev = msg->flags;
+			prev = msg->flags;/*lint !e64*/
 			idx = log_next(idx);
 			seq++;
 		}
@@ -1240,12 +1285,12 @@ static int syslog_print_all(char __user *buf, int size, bool clear)
 		/* move first record forward until length fits into the buffer */
 		seq = clear_seq;
 		idx = clear_idx;
-		prev = 0;
+		prev = 0;/*lint !e64*/
 		while (len > size && seq < log_next_seq) {
 			struct printk_log *msg = log_from_idx(idx);
 
 			len -= msg_print_text(msg, prev, true, NULL, 0);
-			prev = msg->flags;
+			prev = msg->flags;/*lint !e64*/
 			idx = log_next(idx);
 			seq++;
 		}
@@ -1266,7 +1311,7 @@ static int syslog_print_all(char __user *buf, int size, bool clear)
 			}
 			idx = log_next(idx);
 			seq++;
-			prev = msg->flags;
+			prev = msg->flags;/*lint !e64*/
 
 			raw_spin_unlock_irq(&logbuf_lock);
 			if (copy_to_user(buf + len, text, textlen))
@@ -1279,7 +1324,7 @@ static int syslog_print_all(char __user *buf, int size, bool clear)
 				/* messages are gone, move to next one */
 				seq = log_first_seq;
 				idx = log_first_idx;
-				prev = 0;
+				prev = 0;/*lint !e64*/
 			}
 		}
 	}
@@ -1380,7 +1425,7 @@ int do_syslog(int type, char __user *buf, int len, int source)
 			/* messages are gone, move to first one */
 			syslog_seq = log_first_seq;
 			syslog_idx = log_first_idx;
-			syslog_prev = 0;
+			syslog_prev = 0;/*lint !e64*/
 			syslog_partial = 0;
 		}
 		if (source == SYSLOG_FROM_PROC) {
@@ -1402,7 +1447,7 @@ int do_syslog(int type, char __user *buf, int len, int source)
 				error += msg_print_text(msg, prev, true, NULL, 0);
 				idx = log_next(idx);
 				seq++;
-				prev = msg->flags;
+				prev = msg->flags;/*lint !e64*/
 			}
 			error -= syslog_partial;
 		}
@@ -1436,7 +1481,7 @@ static void call_console_drivers(int level,
 {
 	struct console *con;
 
-	trace_console(text, len);
+	trace_console_rcuidle(text, len);
 
 	if (level >= console_loglevel && !ignore_loglevel)
 		return;
@@ -1613,8 +1658,12 @@ static bool cont_add(int facility, int level, const char *text, size_t len)
 		cont.facility = facility;
 		cont.level = level;
 		cont.owner = current;
+#ifdef CONFIG_HISI_TIME
+		cont.ts_nsec = hisi_getcurtime();
+#else
 		cont.ts_nsec = local_clock();
-		cont.flags = 0;
+#endif
+		cont.flags = 0;/*lint !e64*/
 		cont.cons = 0;
 		cont.flushed = false;
 	}
@@ -1664,7 +1713,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 	static char textbuf[LOG_LINE_MAX];
 	char *text = textbuf;
 	size_t text_len = 0;
-	enum log_flags lflags = 0;
+	enum log_flags lflags = 0;/*lint !e64*/
 	unsigned long flags;
 	int this_cpu;
 	int printed_len = 0;
@@ -1754,8 +1803,22 @@ asmlinkage int vprintk_emit(int facility, int level,
 		}
 	}
 
+#ifdef CONFIG_EARLY_PRINTK_DIRECT
+	printascii(text);
+#endif
+
 	if (level == LOGLEVEL_DEFAULT)
 		level = default_message_loglevel;
+
+#ifdef CONFIG_HUAWEI_PRINTK_CTRL
+	if (level > printk_level) {
+		logbuf_cpu = UINT_MAX;
+		raw_spin_unlock(&logbuf_lock);
+		lockdep_on();
+		local_irq_restore(flags);
+		return 0;
+	}
+#endif
 
 	if (dict)
 		lflags |= LOG_PREFIX|LOG_NEWLINE;
@@ -1786,12 +1849,21 @@ asmlinkage int vprintk_emit(int facility, int level,
 		 * If the preceding printk was from a different task and missed
 		 * a newline, flush and append the newline.
 		 */
+#ifdef CONFIG_HISI_TIME
+		if (cont.len) {
+			if (cont.owner == current && !(lflags & LOG_PREFIX))
+				stored = cont_add(facility, level, text,
+						  text_len);
+		}
+		cont_flush(LOG_NEWLINE);
+#else
 		if (cont.len) {
 			if (cont.owner == current && !(lflags & LOG_PREFIX))
 				stored = cont_add(facility, level, text,
 						  text_len);
 			cont_flush(LOG_NEWLINE);
 		}
+#endif
 
 		if (stored)
 			printed_len += text_len;
@@ -1993,8 +2065,8 @@ static int __add_preferred_console(char *name, int idx, char *options,
 	 */
 	for (i = 0, c = console_cmdline;
 	     i < MAX_CMDLINECONSOLES && c->name[0];
-	     i++, c++) {
-		if (strcmp(c->name, name) == 0 && c->index == idx) {
+	     i++, c++) {/*lint !e421*/
+		if (strcmp(c->name, name) == 0 && c->index == idx) {/*lint !e421*/
 			if (!brl_options)
 				selected_console = i;
 			return 0;
@@ -2027,8 +2099,8 @@ static int __init console_setup(char *str)
 	/*
 	 * Decode str into name, index, options.
 	 */
-	if (str[0] >= '0' && str[0] <= '9') {
-		strcpy(buf, "ttyS");
+	if (str[0] >= '0' && str[0] <= '9') {/*lint !e421*/
+		strcpy(buf, "ttyS");/*lint !e421*/
 		strncpy(buf + 4, str, sizeof(buf) - 5);
 	} else {
 		strncpy(buf, str, sizeof(buf) - 1);
@@ -2130,8 +2202,13 @@ static int console_cpu_notify(struct notifier_block *self,
 	case CPU_DEAD:
 	case CPU_DOWN_FAILED:
 	case CPU_UP_CANCELED:
+#ifdef CONFIG_HISI_TIME
+		if (console_trylock())
+			console_unlock();
+#else
 		console_lock();
 		console_unlock();
+#endif
 	}
 	return NOTIFY_OK;
 }
@@ -2164,9 +2241,9 @@ EXPORT_SYMBOL(console_lock);
  *
  * returns 1 on success, and 0 on failure to acquire the lock.
  */
-int console_trylock(void)
+int console_trylock(void)/*lint !e571*/
 {
-	if (down_trylock_console_sem())
+	if (down_trylock_console_sem())/*lint !e571*/
 		return 0;
 	if (console_suspended) {
 		up_console_sem();
@@ -2268,14 +2345,14 @@ again:
 			seen_seq = log_next_seq;
 		}
 
-		if (console_seq < log_first_seq) {
+		if (console_seq < log_first_seq) {/*lint !e421*/
 			len = sprintf(text, "** %u printk messages dropped ** ",
-				      (unsigned)(log_first_seq - console_seq));
+				      (unsigned)(log_first_seq - console_seq));/*lint !e421*/
 
 			/* messages are gone, move to first one */
 			console_seq = log_first_seq;
 			console_idx = log_first_idx;
-			console_prev = 0;
+			console_prev = 0;/*lint !e64*/
 		} else {
 			len = 0;
 		}
@@ -2297,7 +2374,7 @@ skip:
 			 * will properly dump everything later.
 			 */
 			msg->flags &= ~LOG_NOCONS;
-			console_prev = msg->flags;
+			console_prev = msg->flags;/*lint !e64*/
 			goto skip;
 		}
 
@@ -2312,10 +2389,10 @@ skip:
 						sizeof(ext_text) - ext_len,
 						log_dict(msg), msg->dict_len,
 						log_text(msg), msg->text_len);
-		}
+		}/*lint !e64*/
 		console_idx = log_next(console_idx);
 		console_seq++;
-		console_prev = msg->flags;
+		console_prev = msg->flags;/*lint !e64*/
 		raw_spin_unlock(&logbuf_lock);
 
 		stop_critical_timings();	/* don't trace print latency */
@@ -2379,7 +2456,7 @@ void console_unblank(void)
 	 * oops_in_progress is set to 1..
 	 */
 	if (oops_in_progress) {
-		if (down_trylock_console_sem() != 0)
+		if (down_trylock_console_sem() != 0)/*lint !e571*/
 			return;
 	} else
 		console_lock();
@@ -2544,10 +2621,10 @@ void register_console(struct console *newcon)
 	     i < MAX_CMDLINECONSOLES && c->name[0];
 	     i++, c++) {
 		if (!newcon->match ||
-		    newcon->match(newcon, c->name, c->index, c->options) != 0) {
+		    newcon->match(newcon, c->name, c->index, c->options) != 0){/*lint !e421*/
 			/* default matching */
 			BUILD_BUG_ON(sizeof(c->name) != sizeof(newcon->name));
-			if (strcmp(c->name, newcon->name) != 0)
+			if (strcmp(c->name, newcon->name) != 0)/*lint !e421*/
 				continue;
 			if (newcon->index >= 0 &&
 			    newcon->index != c->index)
@@ -2713,7 +2790,6 @@ late_initcall(printk_late_init);
 #define PRINTK_PENDING_OUTPUT	0x02
 
 static DEFINE_PER_CPU(int, printk_pending);
-
 static void wake_up_klogd_work_func(struct irq_work *irq_work)
 {
 	int pending = __this_cpu_xchg(printk_pending, 0);
@@ -2726,10 +2802,10 @@ static void wake_up_klogd_work_func(struct irq_work *irq_work)
 
 	if (pending & PRINTK_PENDING_WAKEUP)
 		wake_up_interruptible(&log_wait);
-}
+}/*lint !e24 !e63 !e446*/
 
 static DEFINE_PER_CPU(struct irq_work, wake_up_klogd_work) = {
-	.func = wake_up_klogd_work_func,
+	.func = wake_up_klogd_work_func,/*lint !e24 !e63 !e446*/
 	.flags = IRQ_WORK_LAZY,
 };
 
@@ -2934,10 +3010,10 @@ bool kmsg_dump_get_line_nolock(struct kmsg_dumper *dumper, bool syslog,
 
 	/* last entry */
 	if (dumper->cur_seq >= log_next_seq)
-		goto out;
+		goto out;/*lint !e64*/
 
 	msg = log_from_idx(dumper->cur_idx);
-	l = msg_print_text(msg, 0, syslog, line, size);
+	l = msg_print_text(msg, 0, syslog, line, size);/*lint !e64*/
 
 	dumper->cur_idx = log_next(dumper->cur_idx);
 	dumper->cur_seq++;
@@ -3029,27 +3105,27 @@ bool kmsg_dump_get_buffer(struct kmsg_dumper *dumper, bool syslog,
 	/* calculate length of entire buffer */
 	seq = dumper->cur_seq;
 	idx = dumper->cur_idx;
-	prev = 0;
+	prev = 0;/*lint !e64*/
 	while (seq < dumper->next_seq) {
 		struct printk_log *msg = log_from_idx(idx);
 
-		l += msg_print_text(msg, prev, true, NULL, 0);
+		l += msg_print_text(msg, prev, true, NULL, 0);/*lint !e64*/
 		idx = log_next(idx);
 		seq++;
-		prev = msg->flags;
+		prev = msg->flags;/*lint !e64*/
 	}
 
 	/* move first record forward until length fits into the buffer */
 	seq = dumper->cur_seq;
 	idx = dumper->cur_idx;
-	prev = 0;
+	prev = 0;/*lint !e64*/
 	while (l > size && seq < dumper->next_seq) {
 		struct printk_log *msg = log_from_idx(idx);
 
-		l -= msg_print_text(msg, prev, true, NULL, 0);
+		l -= msg_print_text(msg, prev, true, NULL, 0);/*lint !e64*/
 		idx = log_next(idx);
 		seq++;
-		prev = msg->flags;
+		prev = msg->flags;/*lint !e64*/
 	}
 
 	/* last message in next interation */
@@ -3060,10 +3136,10 @@ bool kmsg_dump_get_buffer(struct kmsg_dumper *dumper, bool syslog,
 	while (seq < dumper->next_seq) {
 		struct printk_log *msg = log_from_idx(idx);
 
-		l += msg_print_text(msg, prev, syslog, buf + l, size - l);
+		l += msg_print_text(msg, prev, syslog, buf + l, size - l);/*lint !e64*/
 		idx = log_next(idx);
 		seq++;
-		prev = msg->flags;
+		prev = msg->flags;/*lint !e64*/
 	}
 
 	dumper->next_seq = next_seq;
@@ -3150,6 +3226,13 @@ void dump_stack_print_info(const char *log_lvl)
 	       (int)strcspn(init_utsname()->version, " "),
 	       init_utsname()->version);
 
+	/*
+	 * Some threads'name of android is the same in different process.
+	 * So we need to get the tgid and the comm of thread's group_leader.
+	 */
+	printk("TGID: %d Comm: %.20s\n",
+	       current->tgid, current->group_leader->comm);
+
 	if (dump_stack_arch_desc_str[0] != '\0')
 		printk("%sHardware name: %s\n",
 		       log_lvl, dump_stack_arch_desc_str);
@@ -3173,4 +3256,7 @@ void show_regs_print_info(const char *log_lvl)
 	       task_thread_info(current));
 }
 
+#ifdef CONFIG_HISI_TIME
+#include "hisi_printk.c"
+#endif
 #endif

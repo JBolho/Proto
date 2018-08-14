@@ -36,6 +36,7 @@
 #include <linux/hardirq.h>
 #include <linux/jiffies.h>
 #include <linux/workqueue.h>
+#include <linux/hisi/mntn_dump.h>
 
 #include "internal.h"
 
@@ -194,6 +195,30 @@ error:
 	return ret;
 }
 
+static void registe_info_to_mntndump(void)
+{
+	int ret;
+	struct mdump_pstore *head;
+
+	if (!big_oops_buf || !big_oops_buf_sz)
+		return;
+
+	ret = register_mntn_dump(MNTN_DUMP_PSTORE_RAMOOPS,
+		(unsigned int)sizeof(struct mdump_pstore), (void **)&head);
+	if (ret) {
+		pr_err("register compression buf info fail\n");
+		return;
+	}
+	if (!head) {
+		pr_err("head is NULL!\n");
+		return;
+	}
+
+	head->magic = MNTNDUMP_MAGIC;
+	head->ramoops_addr = virt_to_phys(big_oops_buf);
+	head->ramoops_size = big_oops_buf_sz;
+}
+
 static void allocate_buf_for_compression(void)
 {
 	size_t size;
@@ -235,6 +260,7 @@ static void allocate_buf_for_compression(void)
 		stream.workspace = NULL;
 	}
 
+	registe_info_to_mntndump();
 }
 
 static void free_buf_for_compression(void)
@@ -294,6 +320,10 @@ static void pstore_dump(struct kmsg_dumper *dumper,
 		if (!is_locked) {
 			pr_err("pstore dump routine blocked in %s path, may corrupt error record\n"
 				       , in_nmi() ? "NMI" : why);
+			/* If not return,
+			 * data abort will happen when two threads call pstore_dump at the same time
+			 */
+			return;
 		}
 	} else
 		spin_lock_irqsave(&psinfo->buf_lock, flags);
@@ -431,6 +461,40 @@ static int pstore_write_compat(enum pstore_type_id type,
 			     size, psi);
 }
 
+static int pstore_write_buf_user_compat(enum pstore_type_id type,
+			       enum kmsg_dump_reason reason,
+			       u64 *id, unsigned int part,
+			       const char __user *buf,
+			       bool compressed, size_t size,
+			       struct pstore_info *psi)
+{
+	unsigned long flags = 0;
+	size_t i, bufsize = size;
+	long ret = 0;
+
+	if (unlikely(!access_ok(VERIFY_READ, buf, size)))
+		return -EFAULT;
+	if (bufsize > psinfo->bufsize)
+		bufsize = psinfo->bufsize;
+	spin_lock_irqsave(&psinfo->buf_lock, flags);
+	for (i = 0; i < size; ) {
+		size_t c = min(size - i, bufsize);
+
+		ret = __copy_from_user(psinfo->buf, buf + i, c);
+		if (unlikely(ret != 0)) {
+			ret = -EFAULT;
+			break;
+		}
+		ret = psi->write_buf(type, reason, id, part, psinfo->buf,
+				     compressed, c, psi);
+		if (unlikely(ret < 0))
+			break;
+		i += c;
+	}
+	spin_unlock_irqrestore(&psinfo->buf_lock, flags);
+	return unlikely(ret < 0) ? ret : size;
+}
+
 /*
  * platform specific persistent storage driver registers with
  * us here. If pstore is already mounted, call the platform
@@ -453,6 +517,8 @@ int pstore_register(struct pstore_info *psi)
 
 	if (!psi->write)
 		psi->write = pstore_write_compat;
+	if (!psi->write_buf_user)
+		psi->write_buf_user = pstore_write_buf_user_compat;
 	psinfo = psi;
 	mutex_init(&psinfo->read_mutex);
 	spin_unlock(&pstore_lock);

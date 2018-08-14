@@ -45,6 +45,19 @@
 #include <asm/cacheflush.h>
 #include "audit.h"	/* audit_signal_info() */
 
+#ifdef CONFIG_HUAWEI_KSTATE
+#include <huawei_platform/power/hw_kcollect.h>
+#endif
+
+#ifdef CONFIG_BOOST_KILL
+extern void hisi_get_fast_cpus(struct cpumask *cpumask);
+
+/* Add apportunity to config enable/disable boost
+ * killing action
+ */
+unsigned int sysctl_boost_killing;
+#endif
+
 /*
  * SLAB caches for signal bits.
  */
@@ -503,7 +516,8 @@ int unhandled_signal(struct task_struct *tsk, int sig)
 	return !tsk->ptrace;
 }
 
-static void collect_signal(int sig, struct sigpending *list, siginfo_t *info)
+static void collect_signal(int sig, struct sigpending *list, siginfo_t *info,
+			   bool *resched_timer)
 {
 	struct sigqueue *q, *first = NULL;
 
@@ -525,6 +539,12 @@ static void collect_signal(int sig, struct sigpending *list, siginfo_t *info)
 still_pending:
 		list_del_init(&first->list);
 		copy_siginfo(info, &first->info);
+
+		*resched_timer =
+			(first->flags & SIGQUEUE_PREALLOC) &&
+			(info->si_code == SI_TIMER) &&
+			(info->si_sys_private);
+
 		__sigqueue_free(first);
 	} else {
 		/*
@@ -541,12 +561,12 @@ still_pending:
 }
 
 static int __dequeue_signal(struct sigpending *pending, sigset_t *mask,
-			siginfo_t *info)
+			siginfo_t *info, bool *resched_timer)
 {
 	int sig = next_signal(pending, mask);
 
 	if (sig)
-		collect_signal(sig, pending, info);
+		collect_signal(sig, pending, info, resched_timer);
 	return sig;
 }
 
@@ -558,15 +578,16 @@ static int __dequeue_signal(struct sigpending *pending, sigset_t *mask,
  */
 int dequeue_signal(struct task_struct *tsk, sigset_t *mask, siginfo_t *info)
 {
+	bool resched_timer = false;
 	int signr;
 
 	/* We only dequeue private signals from ourselves, we don't let
 	 * signalfd steal them
 	 */
-	signr = __dequeue_signal(&tsk->pending, mask, info);
+	signr = __dequeue_signal(&tsk->pending, mask, info, &resched_timer);
 	if (!signr) {
 		signr = __dequeue_signal(&tsk->signal->shared_pending,
-					 mask, info);
+					 mask, info, &resched_timer);
 		/*
 		 * itimer signal ?
 		 *
@@ -611,7 +632,7 @@ int dequeue_signal(struct task_struct *tsk, sigset_t *mask, siginfo_t *info)
 		 */
 		current->jobctl |= JOBCTL_STOP_DEQUEUED;
 	}
-	if ((info->si_code & __SI_MASK) == __SI_TIMER && info->si_sys_private) {
+	if (resched_timer) {
 		/*
 		 * Release the siglock to ensure proper locking order
 		 * of timer locks outside of siglocks.  Note, we leave
@@ -871,6 +892,11 @@ static void complete_signal(int sig, struct task_struct *p, int group)
 {
 	struct signal_struct *signal = p->signal;
 	struct task_struct *t;
+/*lint -save -e504*/
+#ifdef CONFIG_BOOST_KILL
+	cpumask_t new_mask = CPU_MASK_ALL;
+#endif
+/*lint -restore*/
 
 	/*
 	 * Now find a thread we can wake up to take the signal off the queue.
@@ -927,6 +953,15 @@ static void complete_signal(int sig, struct task_struct *p, int group)
 			signal->group_stop_count = 0;
 			t = p;
 			do {
+#ifdef CONFIG_BOOST_KILL
+				if (sysctl_boost_killing) {
+					if (can_nice(t, -20))
+						set_user_nice(t, -20);
+					hisi_get_fast_cpus(&new_mask);
+					cpumask_copy(&t->cpus_allowed, &new_mask);
+					t->nr_cpus_allowed = cpumask_weight(&new_mask);
+				}
+#endif
 				task_clear_jobctl_pending(t, JOBCTL_PENDING_MASK);
 				sigaddset(&t->pending.signal, SIGKILL);
 				signal_wake_up(t, 1);
@@ -1138,6 +1173,22 @@ int do_send_sig_info(int sig, struct siginfo *info, struct task_struct *p,
 	int ret = -ESRCH;
 
 	if (lock_task_sighand(p, &flags)) {
+#ifdef CONFIG_HUAWEI_KSTATE
+		if (sig == SIGKILL || sig == SIGTERM || sig == SIGABRT)
+			hwkillinfo(p->tgid, sig);
+#endif
+#ifdef CONFIG_HW_DIE_CATCH
+		/*if the process have KILL_CATCH_FLAG, need to catch it in android platform*/
+		if (p->signal->unexpected_die_catch_flags & KILL_CATCH_FLAG) {
+			pr_warn("ExitCatch: %s(%d) send_sig %d to %s(%d)\n",
+				current->comm, current->pid, sig, p->comm, p->pid);
+			/*if current is init, don't consider it*/
+			if (current->pid != 1) {
+				sig = (sig == SIGKILL || sig == SIGTERM) ?
+					SIGABRT : sig;
+			}
+		}
+#endif
 		ret = send_signal(sig, info, p, group);
 		unlock_task_sighand(p, &flags);
 	}
@@ -3581,6 +3632,14 @@ void __init signals_init(void)
 {
 	sigqueue_cachep = KMEM_CACHE(sigqueue, SLAB_PANIC);
 }
+
+#ifdef CONFIG_HISI_SWAP_ZDATA
+int reclaim_sigusr_pending(struct task_struct *tsk)
+{
+	return	sigismember(&tsk->pending.signal, SIGUSR2) ||
+		sigismember(&tsk->signal->shared_pending.signal, SIGUSR2);
+}
+#endif
 
 #ifdef CONFIG_KGDB_KDB
 #include <linux/kdb.h>

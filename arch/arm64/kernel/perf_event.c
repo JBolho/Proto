@@ -88,10 +88,22 @@ enum armv8_a57_perf_types {
 static const unsigned armv8_pmuv3_perf_map[PERF_COUNT_HW_MAX] = {
 	PERF_MAP_ALL_UNSUPPORTED,
 	[PERF_COUNT_HW_CPU_CYCLES]		= ARMV8_PMUV3_PERFCTR_CLOCK_CYCLES,
+/*
+ * * simpleperf test will trigger system reset @ 100% rate, so we need close it:
+ * * simpleperf record -e instructions -a -o /data/perf.data -c 20
+ * * So, we will close hw events by default
+ * */
+#ifdef CONFIG_HISI_HW_PERF_EVENTS
+	[PERF_COUNT_HW_INSTRUCTIONS]		= HW_OP_UNSUPPORTED,
+	[PERF_COUNT_HW_CACHE_REFERENCES]	= HW_OP_UNSUPPORTED,
+	[PERF_COUNT_HW_CACHE_MISSES]		= HW_OP_UNSUPPORTED,
+	[PERF_COUNT_HW_BRANCH_MISSES]		= HW_OP_UNSUPPORTED,
+#else
 	[PERF_COUNT_HW_INSTRUCTIONS]		= ARMV8_PMUV3_PERFCTR_INSTR_EXECUTED,
 	[PERF_COUNT_HW_CACHE_REFERENCES]	= ARMV8_PMUV3_PERFCTR_L1_DCACHE_ACCESS,
 	[PERF_COUNT_HW_CACHE_MISSES]		= ARMV8_PMUV3_PERFCTR_L1_DCACHE_REFILL,
 	[PERF_COUNT_HW_BRANCH_MISSES]		= ARMV8_PMUV3_PERFCTR_PC_BRANCH_MIS_PRED,
+#endif
 };
 
 /* ARM Cortex-A53 HW events mapping. */
@@ -627,6 +639,9 @@ static void armv8_pmu_init(struct arm_pmu *cpu_pmu)
 	cpu_pmu->stop			= armv8pmu_stop,
 	cpu_pmu->reset			= armv8pmu_reset,
 	cpu_pmu->max_period		= (1LLU << 32) - 1,
+#ifdef CONFIG_HISI_HW_PERF_EVENTS
+	cpu_pmu->min_period		= 0xfffff,
+#endif
 	cpu_pmu->set_event_filter	= armv8pmu_set_event_filter;
 }
 

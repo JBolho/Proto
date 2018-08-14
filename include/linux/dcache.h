@@ -14,6 +14,15 @@
 struct path;
 struct vfsmount;
 
+#ifdef CONFIG_HISI_PAGECACHE_DEBUG
+struct mapping_stat_t {
+	unsigned long mmap_sync_read_times;
+	unsigned long generic_sync_read_times;
+	unsigned long async_read_times;
+	unsigned long shrink_page_times;
+};
+#endif
+
 /*
  * linux/include/linux/dcache.h
  *
@@ -126,6 +135,11 @@ struct dentry {
 	struct list_head d_lru;		/* LRU list */
 	struct list_head d_child;	/* child of parent list */
 	struct list_head d_subdirs;	/* our children */
+
+#ifdef CONFIG_HISI_PAGECACHE_DEBUG
+	struct mapping_stat_t mapping_stat;
+#endif
+
 	/*
 	 * d_alias and d_rcu can share memory
 	 */
@@ -161,6 +175,7 @@ struct dentry_operations {
 	struct vfsmount *(*d_automount)(struct path *);
 	int (*d_manage)(struct dentry *, bool);
 	struct inode *(*d_select_inode)(struct dentry *, unsigned);
+	void (*d_canonical_path)(const struct path *, struct path *);
 	struct dentry *(*d_real)(struct dentry *, struct inode *);
 } ____cacheline_aligned;
 
@@ -229,6 +244,8 @@ struct dentry_operations {
 #define DCACHE_FALLTHRU			0x01000000 /* Fall through to lower layer */
 #define DCACHE_OP_SELECT_INODE		0x02000000 /* Unioned entry: dcache op selects inode */
 #define DCACHE_OP_REAL			0x08000000
+
+#define DCACHE_ENCRYPTED_WITH_KEY	0x04000000 /* dir is encrypted with a valid key */
 
 extern seqlock_t rename_lock;
 
@@ -602,6 +619,13 @@ static inline struct inode *vfs_select_inode(struct dentry *dentry,
 
 	return inode;
 }
+
+struct name_snapshot {
+	const char *name;
+	char inline_name[DNAME_INLINE_LEN];
+};
+void take_dentry_name_snapshot(struct name_snapshot *, struct dentry *);
+void release_dentry_name_snapshot(struct name_snapshot *);
 
 /**
  * d_real_inode - Return the real inode

@@ -192,6 +192,8 @@ int elevator_init(struct request_queue *q, char *name)
 		return 0;
 
 	INIT_LIST_HEAD(&q->queue_head);
+	INIT_LIST_HEAD(&q->fg_head);
+	INIT_LIST_HEAD(&q->bg_head);
 	q->last_merge = NULL;
 	q->end_sector = 0;
 	q->boundary_rq = NULL;
@@ -385,6 +387,7 @@ void elv_dispatch_sort(struct request_queue *q, struct request *rq)
 	}
 
 	list_add(&rq->queuelist, entry);
+	queue_throtl_add_request(q, rq, false);
 }
 EXPORT_SYMBOL(elv_dispatch_sort);
 
@@ -405,6 +408,7 @@ void elv_dispatch_add_tail(struct request_queue *q, struct request *rq)
 	q->end_sector = rq_end_sector(rq);
 	q->boundary_rq = rq;
 	list_add_tail(&rq->queuelist, &q->queue_head);
+	queue_throtl_add_request(q, rq, false);
 }
 EXPORT_SYMBOL(elv_dispatch_add_tail);
 
@@ -564,6 +568,7 @@ void elv_requeue_request(struct request_queue *q, struct request *rq)
 	 */
 	if (blk_account_rq(rq)) {
 		q->in_flight[rq_is_sync(rq)]--;
+		queue_throtl_dec_inflight(q, rq);
 		if (rq->cmd_flags & REQ_SORTED)
 			elv_deactivate_rq(q, rq);
 	}
@@ -573,6 +578,42 @@ void elv_requeue_request(struct request_queue *q, struct request *rq)
 	blk_pm_requeue_request(rq);
 
 	__elv_add_request(q, rq, ELEVATOR_INSERT_REQUEUE);
+}
+
+/**
+ * elv_reinsert_request() - Insert a request back to the scheduler
+ *  <at> q:		request queue where request should be inserted
+ *  <at> rq:		request to be inserted
+ *
+ * This function returns the request back to the scheduler to be
+ * inserted as if it was never dispatched
+ *
+ * Return: 0 on success, error code on failure
+ */
+int elv_reinsert_request(struct request_queue *q, struct request *rq)
+{
+	int res;
+
+	if (!q->elevator->type->ops.elevator_reinsert_req_fn)
+		return -EPERM;
+
+	res = q->elevator->type->ops.elevator_reinsert_req_fn(q, rq);
+	if (!res) {
+		/*
+		 * it already went through dequeue, we need to decrement the
+		 * in_flight count again
+		 */
+		if (blk_account_rq(rq)) {
+			q->in_flight[rq_is_sync(rq)]--;
+			queue_throtl_dec_inflight(q, rq);
+			if (rq->cmd_flags & REQ_SORTED)
+				elv_deactivate_rq(q, rq);
+		}
+		rq->cmd_flags &= ~REQ_STARTED;
+		q->nr_sorted++;
+	}
+
+	return res;
 }
 
 void elv_drain_elevator(struct request_queue *q)
@@ -614,12 +655,14 @@ void __elv_add_request(struct request_queue *q, struct request *rq, int where)
 	case ELEVATOR_INSERT_FRONT:
 		rq->cmd_flags |= REQ_SOFTBARRIER;
 		list_add(&rq->queuelist, &q->queue_head);
+		queue_throtl_add_request(q, rq, true);
 		break;
 
 	case ELEVATOR_INSERT_BACK:
 		rq->cmd_flags |= REQ_SOFTBARRIER;
 		elv_drain_elevator(q);
 		list_add_tail(&rq->queuelist, &q->queue_head);
+		queue_throtl_add_request(q, rq, false);
 		/*
 		 * We kick the queue here for the following reasons.
 		 * - The elevator might have returned NULL previously
@@ -731,11 +774,18 @@ void elv_completed_request(struct request_queue *q, struct request *rq)
 {
 	struct elevator_queue *e = q->elevator;
 
+	if (rq->cmd_flags & REQ_URGENT) {
+		q->notified_urgent = false;
+		WARN_ON(!q->dispatched_urgent);
+		q->dispatched_urgent = false;
+	}
+
 	/*
 	 * request is released from the driver, io must be done
 	 */
 	if (blk_account_rq(rq)) {
 		q->in_flight[rq_is_sync(rq)]--;
+		queue_throtl_dec_inflight(q, rq);
 		if ((rq->cmd_flags & REQ_SORTED) &&
 		    e->type->ops.elevator_completed_req_fn)
 			e->type->ops.elevator_completed_req_fn(q, rq);

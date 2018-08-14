@@ -29,6 +29,7 @@
 #include <linux/device.h>
 #include <linux/memcontrol.h>
 #include "internal.h"
+#include <linux/hisi/pagecache_debug.h>
 
 /*
  * 4MB minimal write chunk size
@@ -1451,6 +1452,7 @@ static long writeback_sb_inodes(struct super_block *sb,
 		.range_cyclic		= work->range_cyclic,
 		.range_start		= 0,
 		.range_end		= LLONG_MAX,
+		.reason = work->reason,
 	};
 	unsigned long start_time = jiffies;
 	long write_chunk;
@@ -1703,6 +1705,7 @@ static long wb_writeback(struct bdi_writeback *wb,
 			oldest_jif = jiffies;
 
 		trace_writeback_start(wb, work);
+		pgcache_log(BIT_WRITEBACK_DUMP,	"writeback start");
 		if (list_empty(&wb->b_io))
 			queue_io(wb, work);
 		if (work->sb)
@@ -1885,6 +1888,10 @@ void wb_workfn(struct work_struct *work)
 		do {
 			pages_written = wb_do_writeback(wb);
 			trace_writeback_pages_written(pages_written);
+			if(is_pagecache_stats_enable()) {
+				stat_inc_wb_count();
+				stat_inc_wb_pages_count(pages_written);
+			}
 		} while (!list_empty(&wb->work_list));
 	} else {
 		/*
@@ -1895,6 +1902,10 @@ void wb_workfn(struct work_struct *work)
 		pages_written = writeback_inodes_wb(wb, 1024,
 						    WB_REASON_FORKER_THREAD);
 		trace_writeback_pages_written(pages_written);
+		if(is_pagecache_stats_enable()) {
+			stat_inc_wb_count();
+			stat_inc_wb_pages_count(pages_written);
+		}
 	}
 
 	if (!list_empty(&wb->work_list))
@@ -2062,7 +2073,7 @@ void __mark_inode_dirty(struct inode *inode, int flags)
 	    (dirtytime && (inode->i_state & I_DIRTY_INODE)))
 		return;
 
-	if (unlikely(block_dump))
+	if (unlikely(block_dump > 1))
 		block_dump___mark_inode_dirty(inode);
 
 	spin_lock(&inode->i_lock);

@@ -173,4 +173,53 @@ config PCI_HISI
 	help
 	  Say Y here if you want PCIe controller support on HiSilicon HIP05 SoC
 
+config KIRIN_PCIE_TEST
+	tristate "Hisilicon kirin PCIe test"
+	depends on PCIE_KIRIN
+	help
+	  Say Y here if you want to use testcases for PCIe controller on Hisilicon Kirin SoC
+
+config PCIE_KIRIN
+	tristate "Hisilicon kirin PCIe platform bus driver"
+	depends on PCI
+	select PCIE_DW
+	help
+	  Say Y here if you want PCIe controller support on Hisilicon Kirin SoC
+
+config PCIE_KIRIN_SLT
+	tristate "Hisilicon kirin PCIe SLT"
+	depends on PCIE_KIRIN
+	help
+	  Say Y here if you want to use SLT Func for PCIe on Hisilicon Kirin SoC
+
+config PCIE_KIRIN_DMD
+	tristate "Hisilicon kirin PCIe dmd log"
+	depends on PCIE_KIRIN
+	help
+	  Say Y here if you want PCIe controller support on Hisilicon Kirin SoC
+
+config KIRIN_PCIE_EYEPARAM
+	tristate "Hisilicon kirin PCIe eye-param modify"
+	depends on PCIE_KIRIN
+	help
+	  Say Y here if you want PCIe controller support on Hisilicon Kirin SoC
+
+config KIRIN_PCIE_HI3660
+	tristate "Hisilicon kirin PCIe Hi3660, 1 RC"
+	select PCIE_KIRIN
+	help
+	  Say Y here if you are in Hi3660
+
+config KIRIN_PCIE_KIRIN970
+	tristate "Hisilicon kirin PCIe kirin970, ES -- 2 RC, CS -- 1 RC"
+	select PCIE_KIRIN
+	help
+	  Say Y here if you are in kirin970
+
+config KIRIN_PCIE_NOC_DBG
+	tristate "Hisilicon kirin NOC DEBUG"
+	select PCIE_KIRIN
+	help
+	  Say Y here if you want dump pcie host info when PCIe NOC happen
+
 endmenu

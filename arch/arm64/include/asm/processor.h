@@ -29,8 +29,10 @@
 
 #include <linux/string.h>
 
+#include <asm/alternative.h>
 #include <asm/fpsimd.h>
 #include <asm/hw_breakpoint.h>
+#include <asm/lse.h>
 #include <asm/pgtable-hwdef.h>
 #include <asm/ptrace.h>
 #include <asm/types.h>
@@ -155,8 +157,14 @@ static inline void cpu_relax(void)
 extern struct task_struct *cpu_switch_to(struct task_struct *prev,
 					 struct task_struct *next);
 
+#ifdef CONFIG_HUAWEI_KERNEL_STACK_RANDOMIZE
+extern unsigned int kstack_offset;
+#define task_pt_regs(p) \
+	((struct pt_regs *)(THREAD_START_SP - kstack_offset + task_stack_page(p)) - 1)
+#else
 #define task_pt_regs(p) \
 	((struct pt_regs *)(THREAD_START_SP + task_stack_page(p)) - 1)
+#endif
 
 #define KSTK_EIP(tsk)	((unsigned long)task_pt_regs(tsk)->pc)
 #define KSTK_ESP(tsk)	user_stack_pointer(task_pt_regs(tsk))
@@ -177,15 +185,18 @@ static inline void prefetchw(const void *ptr)
 }
 
 #define ARCH_HAS_SPINLOCK_PREFETCH
-static inline void spin_lock_prefetch(const void *x)
+static inline void spin_lock_prefetch(const void *ptr)
 {
-	prefetchw(x);
+	asm volatile(ARM64_LSE_ATOMIC_INSN(
+		     "prfm pstl1strm, %a0",
+		     "nop") : : "p" (ptr));
 }
 
 #define HAVE_ARCH_PICK_MMAP_LAYOUT
 
 #endif
 
-void cpu_enable_pan(void *__unused);
+int cpu_enable_pan(void *__unused);
+int cpu_enable_uao(void *__unused);
 
 #endif /* __ASM_PROCESSOR_H */

@@ -28,6 +28,7 @@
 #include <linux/usb.h>
 #include <linux/usb/quirks.h>
 #include <linux/usb/hcd.h>
+#include <linux/hisi/usb/hisi_usb.h>
 
 #include "usb.h"
 
@@ -430,7 +431,7 @@ static int usb_unbind_interface(struct device *dev)
 			if (!eps)
 				break;
 		}
-		eps[j++] = ep;
+		eps[j++] = ep; /* [false alarm]:this is original code */
 	}
 	if (j) {
 		usb_free_streams(intf, eps, j, GFP_KERNEL);
@@ -795,7 +796,7 @@ const struct usb_device_id *usb_match_id(struct usb_interface *interface,
 }
 EXPORT_SYMBOL_GPL(usb_match_id);
 
-static int usb_device_match(struct device *dev, struct device_driver *drv)
+static int do_usb_device_match(struct device *dev, struct device_driver *drv)
 {
 	/* devices and interfaces are handled separately */
 	if (is_usb_device(dev)) {
@@ -829,6 +830,19 @@ static int usb_device_match(struct device *dev, struct device_driver *drv)
 	}
 
 	return 0;
+}
+
+static int usb_device_match(struct device *dev, struct device_driver *drv)
+{
+	int ret = do_usb_device_match(dev, drv);
+
+	if (ret) {
+		usb_host_abnormal_event_notify(USB_HOST_EVENT_NORMAL);
+	} else {
+		usb_host_abnormal_event_notify(USB_HOST_EVENT_UNKNOW_DEVICE);
+	}
+
+	return ret;
 }
 
 static int usb_uevent(struct device *dev, struct kobj_uevent_env *env)
@@ -1328,6 +1342,24 @@ static int usb_suspend_both(struct usb_device *udev, pm_message_t msg)
 		 */
 		if (udev->parent && !PMSG_IS_AUTO(msg))
 			status = 0;
+
+		/*
+		 * If the device is inaccessible, don't try to resume
+		 * suspended interfaces and just return the error.
+		 */
+		if (status && status != -EBUSY) {
+			int err;
+			u16 devstat;
+
+			err = usb_get_status(udev, USB_RECIP_DEVICE, 0,
+					     &devstat);
+			if (err) {
+				dev_err(&udev->dev,
+					"Failed to suspend device, error %d\n",
+					status);
+				goto done;
+			}
+		}
 	}
 
 	/* If the suspend failed, resume interfaces that did get suspended */
@@ -1441,6 +1473,17 @@ int usb_suspend(struct device *dev, pm_message_t msg)
 {
 	struct usb_device	*udev = to_usb_device(dev);
 
+#ifdef CONFIG_HISI_USB_SKIP_RESUME
+	if (udev->bus->skip_resume) {
+		if (udev->state == USB_STATE_SUSPENDED)
+			return 0;
+		else {
+			dev_err(dev, "abort suspend\n");
+			return -EBUSY;
+		}
+	}
+#endif
+
 	unbind_no_pm_drivers_interfaces(udev);
 
 	/* From now on we are sure all drivers support suspend/resume
@@ -1469,6 +1512,18 @@ int usb_resume(struct device *dev, pm_message_t msg)
 {
 	struct usb_device	*udev = to_usb_device(dev);
 	int			status;
+
+#ifdef CONFIG_HISI_USB_SKIP_RESUME
+	/*
+	 * Some buses would like to keep their devices in suspend
+	 * state after system resume.  Their resume happen when
+	 * a remote wakeup is detected or interface driver start
+	 * I/O.
+	 */
+	if (udev->bus->skip_resume) {
+		return 0;
+	}
+#endif
 
 	/* For all calls, take the device back to full power and
 	 * tell the PM core in case it was autosuspended previously.
@@ -1759,6 +1814,9 @@ static int autosuspend_check(struct usb_device *udev)
 {
 	int			w, i;
 	struct usb_interface	*intf;
+
+	if (udev->state == USB_STATE_NOTATTACHED)
+		return -ENODEV;
 
 	/* Fail if autosuspend is disabled, or any interfaces are in use, or
 	 * any interface drivers require remote wakeup but it isn't available.

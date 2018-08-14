@@ -10,6 +10,22 @@
 #include <linux/rwsem.h>
 #include <linux/memcontrol.h>
 
+extern int isolate_lru_page(struct page *page);
+extern void putback_lru_page(struct page *page);
+#ifdef CONFIG_HISI_SWAP_ZDATA
+extern unsigned long reclaim_pages_from_list(struct list_head *page_list,
+						struct vm_area_struct *vma, bool hiber,
+						unsigned *nr_writedblock);
+#else
+extern unsigned long reclaim_pages_from_list(struct list_head *page_list,
+					     struct vm_area_struct *vma);
+#endif
+extern int try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
+			    unsigned long address, void *arg);
+
+extern int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
+		        unsigned long address, pte_t *page_table, pmd_t *pmd,
+			unsigned int flags, pte_t orig_pte);
 /*
  * The anon_vma heads a list of private "related" vmas, to scan if
  * an anonymous page pointing to this anon_vma needs to be unmapped:
@@ -176,7 +192,8 @@ int page_referenced(struct page *, int is_locked,
 
 #define TTU_ACTION(x) ((x) & TTU_ACTION_MASK)
 
-int try_to_unmap(struct page *, enum ttu_flags flags);
+int try_to_unmap(struct page *, enum ttu_flags flags,
+		 struct vm_area_struct *vma);
 
 /*
  * Used by uprobes to replace a userspace page safely
@@ -232,6 +249,7 @@ int page_mapped_in_vma(struct page *page, struct vm_area_struct *vma);
  */
 struct rmap_walk_control {
 	void *arg;
+	struct vm_area_struct *target_vma;
 	int (*rmap_one)(struct page *page, struct vm_area_struct *vma,
 					unsigned long addr, void *arg);
 	int (*done)(struct page *page);
@@ -255,7 +273,7 @@ static inline int page_referenced(struct page *page, int is_locked,
 	return 0;
 }
 
-#define try_to_unmap(page, refs) SWAP_FAIL
+#define try_to_unmap(page, refs, vma) SWAP_FAIL
 
 static inline int page_mkclean(struct page *page)
 {

@@ -20,6 +20,9 @@
 #include <linux/list_lru.h>
 #include <trace/events/writeback.h>
 #include "internal.h"
+#ifdef CONFIG_TASK_PROTECT_LRU
+#include <linux/hisi/protect_lru.h>
+#endif
 
 /*
  * Inode locking rules:
@@ -128,10 +131,14 @@ static int no_open(struct inode *inode, struct file *file)
  */
 int inode_init_always(struct super_block *sb, struct inode *inode)
 {
+	gfp_t mask = GFP_HIGHUSER_MOVABLE;
 	static const struct inode_operations empty_iops;
 	static const struct file_operations no_open_fops = {.open = no_open};
 	struct address_space *const mapping = &inode->i_data;
 
+#ifdef CONFIG_TASK_PROTECT_LRU
+	inode->i_protect = 0;
+#endif
 	inode->i_sb = sb;
 	inode->i_blkbits = sb->s_blocksize_bits;
 	inode->i_flags = 0;
@@ -154,6 +161,12 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	inode->i_rdev = 0;
 	inode->dirtied_when = 0;
 
+#ifdef CONFIG_CGROUP_WRITEBACK
+	inode->i_wb_frn_winner = 0;
+	inode->i_wb_frn_avg_time = 0;
+	inode->i_wb_frn_history = 0;
+#endif
+
 	if (security_inode_alloc(inode))
 		goto out;
 	spin_lock_init(&inode->i_lock);
@@ -168,7 +181,13 @@ int inode_init_always(struct super_block *sb, struct inode *inode)
 	mapping->host = inode;
 	mapping->flags = 0;
 	atomic_set(&mapping->i_mmap_writable, 0);
-	mapping_set_gfp_mask(mapping, GFP_HIGHUSER_MOVABLE);
+
+	if (sb->s_magic == F2FS_SUPER_MAGIC
+		|| sb->s_magic == EXT4_SUPER_MAGIC)
+		mask |= ___GFP_CMA;
+
+	mapping_set_gfp_mask(mapping, mask);
+
 	mapping->private_data = NULL;
 	mapping->writeback_index = 0;
 	inode->i_private = NULL;
@@ -395,6 +414,10 @@ static void inode_lru_list_add(struct inode *inode)
 {
 	if (list_lru_add(&inode->i_sb->s_inode_lru, &inode->i_lru))
 		this_cpu_inc(nr_unused);
+#ifdef CONFIG_TASK_PROTECT_LRU
+	else if (protect_lru_enable && inode->i_protect != 0)
+		list_lru_move(&inode->i_sb->s_inode_lru, &inode->i_lru);
+#endif
 }
 
 /*

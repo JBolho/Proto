@@ -115,7 +115,17 @@ enum fw_resource_type {
 	RSC_DEVMEM	= 1,
 	RSC_TRACE	= 2,
 	RSC_VDEV	= 3,
+#ifdef CONFIG_HISI_REMOTEPROC
+	RSC_VERSION	= 4,
+	RSC_RDR_MEMORY	= 5,
+	RSC_DYNAMIC_MEMORY	= 6,
+	RSC_RESERVED_MEMORY	= 7,
+	RSC_CDA	= 8,
+	RSC_SHARED_PARA	= 9,
+	RSC_LAST	= 10,
+#else
 	RSC_LAST	= 4,
+#endif
 };
 
 #define FW_RSC_ADDR_ANY (0xFFFFFFFFFFFFFFFF)
@@ -439,6 +449,20 @@ struct rproc {
 	struct resource_table *cached_table;
 	u32 table_csum;
 	bool has_iommu;
+#ifdef CONFIG_HISI_REMOTEPROC
+	const char *bootware;
+	int num_cdas;
+	struct list_head dynamic_mems;
+	struct list_head reserved_mems;
+	struct list_head cdas;
+	struct list_head caches;
+	struct list_head pages;
+	bool rproc_enable_flag;
+	bool sync_flag;
+	unsigned int ipc_addr;
+	struct completion boot_comp;
+	struct work_struct sec_rscwork;
+#endif
 };
 
 /* we currently support only two vrings per rvdev */

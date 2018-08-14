@@ -206,7 +206,9 @@ static int __get_v4l2_format32(struct v4l2_format *kp, struct v4l2_format32 __us
 						  &up->fmt.pix_mp);
 	case V4L2_BUF_TYPE_VIDEO_OVERLAY:
 	case V4L2_BUF_TYPE_VIDEO_OUTPUT_OVERLAY:
-		return get_v4l2_window32(&kp->fmt.win, &up->fmt.win);
+		/* revesied for V8 L Update */
+		/* return get_v4l2_window32(&kp->fmt.win, &up->fmt.win); */
+		return get_v4l2_pix_format(&kp->fmt.pix, &up->fmt.pix);
 	case V4L2_BUF_TYPE_VBI_CAPTURE:
 	case V4L2_BUF_TYPE_VBI_OUTPUT:
 		return get_v4l2_vbi_format(&kp->fmt.vbi, &up->fmt.vbi);
@@ -216,6 +218,12 @@ static int __get_v4l2_format32(struct v4l2_format *kp, struct v4l2_format32 __us
 	case V4L2_BUF_TYPE_SDR_CAPTURE:
 	case V4L2_BUF_TYPE_SDR_OUTPUT:
 		return get_v4l2_sdr_format(&kp->fmt.sdr, &up->fmt.sdr);
+	/*linux kernel4.10 update, 20160303, begin */
+	case V4L2_BUF_TYPE_PRIVATE:
+		if (copy_from_user(kp, up, sizeof(kp->fmt.raw_data)))
+			return -EFAULT;
+		return 0;
+	/*linux kernel4.10 update, 20160303, end */
 	default:
 		pr_info("compat_ioctl32: unexpected VIDIOC_FMT type %d\n",
 								kp->type);
@@ -756,8 +764,12 @@ static int put_v4l2_ext_controls32(struct v4l2_ext_controls *kp, struct v4l2_ext
 struct v4l2_event32 {
 	__u32				type;
 	union {
-		compat_s64		value64;
-		__u8			data[64];
+		struct v4l2_event_vsync		vsync;
+		struct v4l2_event_ctrl		ctrl;
+		struct v4l2_event_frame_sync	frame_sync;
+		struct v4l2_event_src_change src_change;
+		struct v4l2_event_motion_det motion_det;
+		__u8			data[128];
 	} u;
 	__u32				pending;
 	__u32				sequence;
@@ -1042,15 +1054,22 @@ long v4l2_compat_ioctl32(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct video_device *vdev = video_devdata(file);
 	long ret = -ENOIOCTLCMD;
+	struct mutex *lock = v4l2_ioctl_get_lock(vdev, cmd);
 
 	if (!file->f_op->unlocked_ioctl)
 		return ret;
 
 	if (_IOC_TYPE(cmd) == 'V' && _IOC_NR(cmd) < BASE_VIDIOC_PRIVATE)
 		ret = do_video_ioctl(file, cmd, arg);
-	else if (vdev->fops->compat_ioctl32)
+	else if (vdev->fops->compat_ioctl32) {
+		if (lock && mutex_lock_interruptible(lock))
+			return -ERESTARTSYS;
+
 		ret = vdev->fops->compat_ioctl32(file, cmd, arg);
 
+		if (lock)
+			mutex_unlock(lock);
+	}
 	if (ret == -ENOIOCTLCMD)
 		pr_debug("compat_ioctl32: unknown ioctl '%c', dir=%d, #%d (0x%08x)\n",
 			 _IOC_TYPE(cmd), _IOC_DIR(cmd), _IOC_NR(cmd), cmd);

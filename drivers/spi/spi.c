@@ -1160,6 +1160,10 @@ static void __spi_pump_messages(struct spi_master *master, bool in_kthread)
 	if (ret) {
 		dev_err(&master->dev,
 			"failed to transfer one message from queue\n");
+#if defined CONFIG_HISI_SPI
+		master->cur_msg->status = ret;
+		spi_finalize_current_message(master);
+#endif
 		return;
 	}
 }

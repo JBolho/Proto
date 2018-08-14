@@ -12,7 +12,13 @@
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/of.h>
+#ifdef CONFIG_HISI_CLK
+#include <linux/clkdev.h>
+#endif
 
+#ifdef CONFIG_HISI_CLK
+extern int IS_FPGA(void);
+#endif
 /*
  * DOC: basic fixed multiplier and divider clock that cannot gate
  *
@@ -63,10 +69,23 @@ static int clk_factor_set_rate(struct clk_hw *hw, unsigned long rate,
 	return 0;
 }
 
+#ifdef CONFIG_HISI_CLK_DEBUG
+static int hi3xxx_dumpfixed_factor(struct clk_hw *hw, char* buf)
+{
+	struct clk_fixed_factor *fix = to_clk_fixed_factor(hw);
+	if(buf)
+		snprintf(buf, DUMP_CLKBUFF_MAX_SIZE, "[%s] : fixed div value = %d\n", __clk_get_name(hw->clk), fix->div);
+	return 0;
+}
+#endif
+
 const struct clk_ops clk_fixed_factor_ops = {
 	.round_rate = clk_factor_round_rate,
 	.set_rate = clk_factor_set_rate,
 	.recalc_rate = clk_factor_recalc_rate,
+#ifdef CONFIG_HISI_CLK_DEBUG
+	.dump_reg = hi3xxx_dumpfixed_factor,
+#endif
 };
 EXPORT_SYMBOL_GPL(clk_fixed_factor_ops);
 
@@ -98,7 +117,7 @@ struct clk *clk_register_fixed_factor(struct device *dev, const char *name,
 	if (IS_ERR(clk))
 		kfree(fix);
 
-	return clk;
+	return clk;/*lint !e593 */
 }
 EXPORT_SYMBOL_GPL(clk_register_fixed_factor);
 
@@ -126,14 +145,33 @@ void __init of_fixed_factor_clk_setup(struct device_node *node)
 	}
 
 	of_property_read_string(node, "clock-output-names", &clk_name);
-	parent_name = of_clk_get_parent_name(node, 0);
+#ifdef CONFIG_HISI_CLK
+	if (IS_FPGA()) {
+		if (NULL != of_find_property(node, "clock-fpga", NULL)) {
+			if (of_property_read_string(node, "clock-fpga", &parent_name)) {
+				pr_err("[%s] %s node clock-fpga value is NULL!\n",
+					__func__, node->name);
+				return;
+			}
+		} else {
+			parent_name = of_clk_get_parent_name(node, 0);
+		}
+	} else {
+#endif
+		parent_name = of_clk_get_parent_name(node, 0);
+#ifdef CONFIG_HISI_CLK
+	}
+#endif
 
 	clk = clk_register_fixed_factor(NULL, clk_name, parent_name, 0,
 					mult, div);
 	if (!IS_ERR(clk))
 		of_clk_add_provider(node, of_clk_src_simple_get, clk);
+#ifdef CONFIG_HISI_CLK
+	clk_register_clkdev(clk, clk_name, NULL);
+#endif
 }
 EXPORT_SYMBOL_GPL(of_fixed_factor_clk_setup);
 CLK_OF_DECLARE(fixed_factor_clk, "fixed-factor-clock",
-		of_fixed_factor_clk_setup);
+		of_fixed_factor_clk_setup); /*lint !e611 */
 #endif

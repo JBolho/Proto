@@ -241,6 +241,14 @@ cmd_record_mcount =						\
 	fi;
 endif
 
+define kernel-perfcheck-c
+$(hide) $(if $(KBUILD_SRC),$(srctree)/)../../vendor/huawei/chipset_common/build/tools/perfcheck/clang-perfcheck \
+	-scandirconf=$(if $(KBUILD_SRC),$(srctree)/)../../out/clang-perfcheck.dirconf \
+	-excludedir=$(if $(KBUILD_SRC),$(srctree)/)../../external/libcxx/include \
+	$< -- -resource-dir $(if $(KBUILD_SRC),$(srctree)/)../../prebuilts/clang/host/linux-x86/clang-3859424/bin/../lib64/clang/4.0.285906 \
+	$(filter -I% -D%, $(c_flags))
+endef
+
 define rule_cc_o_c
 	$(call echo-cmd,checksrc) $(cmd_checksrc)			  \
 	$(call echo-cmd,cc_o_c) $(cmd_cc_o_c);				  \
@@ -255,8 +263,20 @@ endef
 
 # Built-in and composite module parts
 $(obj)/%.o: $(src)/%.c $(recordmcount_source) FORCE
+ifeq ($(MAKECMDGOALS),new_pc_lint)
+	@cat $(LINT_PATH)/empty.o > $@
+ifeq ($(ARCH), arm64)
+	@-wine $(LINT_PATH)/LINT-NT.EXE $(lint_flags) $(LINT_PATH)/kernel.lnt $(LINT_PATH)/size-options-arm64.lnt $< > $(obj)/$*.lint
+else
+	@-wine $(LINT_PATH)/LINT-NT.EXE $(lint_flags) $(LINT_PATH)/kernel.lnt $(LINT_PATH)/size-options-arm32.lnt $< > $(obj)/$*.lint
+endif
+else
 	$(call cmd,force_checksrc)
 	$(call if_changed_rule,cc_o_c)
+ifeq (true, $(CLANG_PERFCHECK))
+	$(kernel-perfcheck-c)
+endif
+endif
 
 # Single-part modules are special since we need to mark them in $(MODVERDIR)
 
@@ -291,7 +311,11 @@ quiet_cmd_as_o_S = AS $(quiet_modtag)  $@
 cmd_as_o_S       = $(CC) $(a_flags) -c -o $@ $<
 
 $(obj)/%.o: $(src)/%.S FORCE
+ifeq ($(MAKECMDGOALS),new_pc_lint)
+	@cat $(LINT_PATH)/empty.o > $@
+else
 	$(call if_changed_dep,as_o_S)
+endif
 
 targets += $(real-objs-y) $(real-objs-m) $(lib-y)
 targets += $(extra-y) $(MAKECMDGOALS) $(always)
@@ -333,8 +357,16 @@ cmd_link_o_target = $(if $(strip $(obj-y)),\
 		      $(cmd_secanalysis),\
 		      rm -f $@; $(AR) rcs$(KBUILD_ARFLAGS) $@)
 
+ifndef rename-text-section-to
 $(builtin-target): $(obj-y) FORCE
 	$(call if_changed,link_o_target)
+else
+cmd_rename_text_section = $(OBJCOPY) --rename-section .text=$(rename-text-section-to) $< $@
+$(builtin-target): $(obj)/.built-in.o FORCE
+	$(call if_changed,rename_text_section)
+$(obj)/.built-in.o: $(obj-y) FORCE
+	$(call if_changed,link_o_target)
+endif
 
 targets += $(builtin-target)
 endif # builtin-target
@@ -425,3 +457,18 @@ endif
 # information in a variable se we can use it in if_changed and friends.
 
 .PHONY: $(PHONY)
+
+
+export LINT_PATH = $(if $(KBUILD_SRC),$(srctree)/)../../vendor/hisi/llt/ci/tools/pc-lint
+
+lint_flags = $(filter -I% -D%, $(c_flags)) -I$(LINT_PATH) -header"(generated/autoconf.h)" -D_lint -DLINUX_PC_LINT
+
+lint-y = $(real-objs-y) $(extra-y)
+lint-m = $(real-objs-m)
+lint-a = $(always)
+
+new_pc_lint: build = -f $(if $(KBUILD_SRC),$(srctree)/)scripts/Makefile.build new_pc_lint obj
+new_pc_lint: $(lint-y) $(lint-m) $(subdir-ym) $(lint-a)
+	@:
+
+

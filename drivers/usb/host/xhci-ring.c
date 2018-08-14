@@ -69,6 +69,15 @@
 #include "xhci.h"
 #include "xhci-trace.h"
 
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+#include <linux/hisi/usb/hisi_usb.h>
+
+#ifdef CONFIG_HUAWEI_DSM
+#include <dsm/dsm_pub.h>
+#endif
+
+#endif
+
 /*
  * Returns zero if the TRB isn't in this segment, otherwise it returns the DMA
  * address of the TRB.
@@ -846,17 +855,6 @@ void xhci_stop_endpoint_command_watchdog(unsigned long arg)
 	spin_lock_irqsave(&xhci->lock, flags);
 
 	ep->stop_cmds_pending--;
-	if (xhci->xhc_state & XHCI_STATE_REMOVING) {
-		spin_unlock_irqrestore(&xhci->lock, flags);
-		return;
-	}
-	if (xhci->xhc_state & XHCI_STATE_DYING) {
-		xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
-				"Stop EP timer ran, but another timer marked "
-				"xHCI as DYING, exiting.");
-		spin_unlock_irqrestore(&xhci->lock, flags);
-		return;
-	}
 	if (!(ep->stop_cmds_pending == 0 && (ep->ep_state & EP_HALT_PENDING))) {
 		xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
 				"Stop EP timer ran, but no command pending, "
@@ -906,6 +904,17 @@ void xhci_stop_endpoint_command_watchdog(unsigned long arg)
 	usb_hc_died(xhci_to_hcd(xhci));
 	xhci_dbg_trace(xhci, trace_xhci_dbg_cancel_urb,
 			"xHCI host controller is dead.");
+
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	if ((xhci->quirks & XHCI_CTRL_NYET_ABNORMAL) &&
+			!(xhci->xhc_state & XHCI_STATE_REMOVING)) {
+		xhci_warn(xhci, "arm usb stop endpoint command failed, use hifi usb\n");
+		hisi_usb_otg_event(START_AP_USE_HIFIUSB);
+#ifdef CONFIG_HUAWEI_DSM
+		usb_dsm_report(DSM_USB_XHCI_CMD_TIMEOUT, "xhci command timeout\n");
+#endif
+	}
+#endif
 }
 
 
@@ -1268,41 +1277,83 @@ void xhci_handle_command_timeout(unsigned long data)
 	bool second_timeout = false;
 	xhci = (struct xhci_hcd *) data;
 
-	/* mark this command to be cancelled */
 	spin_lock_irqsave(&xhci->lock, flags);
-	if (xhci->current_cmd) {
-		if (xhci->current_cmd->status == COMP_CMD_ABORT)
-			second_timeout = true;
-		xhci->current_cmd->status = COMP_CMD_ABORT;
+
+	if (!xhci->current_cmd) {
+		spin_unlock_irqrestore(&xhci->lock, flags);
+		return;
 	}
+
+	/* mark this command to be cancelled */
+	if (xhci->current_cmd->status == COMP_CMD_ABORT)
+		second_timeout = true;
+	xhci->current_cmd->status = COMP_CMD_ABORT;
 
 	/* Make sure command ring is running before aborting it */
 	hw_ring_state = xhci_read_64(xhci, &xhci->op_regs->cmd_ring);
 	if ((xhci->cmd_ring_state & CMD_RING_STATE_RUNNING) &&
 	    (hw_ring_state & CMD_RING_RUNNING))  {
-		spin_unlock_irqrestore(&xhci->lock, flags);
-		xhci_dbg(xhci, "Command timeout\n");
+		xhci_info(xhci, "Command timeout\n");
 		ret = xhci_abort_cmd_ring(xhci);
 		if (unlikely(ret == -ESHUTDOWN)) {
 			xhci_err(xhci, "Abort command ring failed\n");
 			xhci_cleanup_command_queue(xhci);
+			spin_unlock_irqrestore(&xhci->lock, flags);
 			usb_hc_died(xhci_to_hcd(xhci)->primary_hcd);
-			xhci_dbg(xhci, "xHCI host controller is dead.\n");
+			xhci_info(xhci, "xHCI host controller is dead.\n");
+
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+			if ((xhci->quirks & XHCI_CTRL_NYET_ABNORMAL) &&
+					!(xhci->xhc_state & XHCI_STATE_REMOVING)) {
+				xhci_warn(xhci, "arm usb abnormal, use hifi usb\n");
+				hisi_usb_otg_event(START_AP_USE_HIFIUSB);
+#ifdef CONFIG_HUAWEI_DSM
+				usb_dsm_report(DSM_USB_XHCI_CMD_TIMEOUT,
+						"xhci command timeout\n");
+#endif
+			}
+#endif
+			return;
 		}
-		return;
+
+		goto time_out_completed;
 	}
 
 	/* command ring failed to restart, or host removed. Bail out */
 	if (second_timeout || xhci->xhc_state & XHCI_STATE_REMOVING) {
-		spin_unlock_irqrestore(&xhci->lock, flags);
 		xhci_dbg(xhci, "command timed out twice, ring start fail?\n");
 		xhci_cleanup_command_queue(xhci);
-		return;
+
+		goto time_out_completed;
 	}
 
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	if ((xhci->quirks & XHCI_CTRL_NYET_ABNORMAL) &&
+			!(xhci->xhc_state & XHCI_STATE_REMOVING)) {
+		xhci_warn(xhci, "arm usb abnormal, use hifi usb\n");
+
+		xhci_cleanup_command_queue(xhci);
+		xhci->xhc_state |= XHCI_STATE_DYING;
+		/* Disable interrupts from the host controller and start halting it */
+		xhci_quiesce(xhci);
+		spin_unlock_irqrestore(&xhci->lock, flags);
+		usb_hc_died(xhci_to_hcd(xhci)->primary_hcd);
+		xhci_info(xhci, "xHCI host controller is dead.\n");
+
+		hisi_usb_otg_event(START_AP_USE_HIFIUSB);
+
+#ifdef CONFIG_HUAWEI_DSM
+		usb_dsm_report(DSM_USB_XHCI_CMD_TIMEOUT, "xhci command timeout\n");
+#endif
+		return;
+	}
+#endif
+
 	/* command timeout on stopped ring, ring can't be aborted */
-	xhci_dbg(xhci, "Command timeout on stopped ring\n");
+	xhci_info(xhci, "Command timeout on stopped ring\n");
 	xhci_handle_stopped_cmd_ring(xhci, xhci->current_cmd);
+
+time_out_completed:
 	spin_unlock_irqrestore(&xhci->lock, flags);
 	return;
 }
@@ -1361,8 +1412,11 @@ static void handle_cmd_completion(struct xhci_hcd *xhci,
 	 */
 	if (cmd_comp_code == COMP_CMD_ABORT) {
 		xhci->cmd_ring_state = CMD_RING_STATE_STOPPED;
-		if (cmd->status == COMP_CMD_ABORT)
+		if (cmd->status == COMP_CMD_ABORT) {
+			if (xhci->current_cmd == cmd)
+				xhci->current_cmd = NULL;
 			goto event_handled;
+		}
 	}
 
 	cmd_type = TRB_FIELD_TO_TYPE(le32_to_cpu(cmd_trb->generic.field[3]));
@@ -1424,6 +1478,8 @@ static void handle_cmd_completion(struct xhci_hcd *xhci,
 		xhci->current_cmd = list_entry(cmd->cmd_list.next,
 					       struct xhci_command, cmd_list);
 		mod_timer(&xhci->cmd_timer, jiffies + XHCI_CMD_DEFAULT_TIMEOUT);
+	} else if (xhci->current_cmd == cmd) {
+		xhci->current_cmd = NULL;
 	}
 
 event_handled:
@@ -1539,6 +1595,12 @@ static void handle_port_status(struct xhci_hcd *xhci,
 	hcd = xhci_to_hcd(xhci);
 	if ((major_revision == 0x03) != (hcd->speed >= HCD_USB3))
 		hcd = xhci->shared_hcd;
+
+	if (!hcd) {
+		xhci_warn(xhci, "hcd had been remove, ignore this event!\n");
+		bogus_port_status = true;
+		goto cleanup;
+	}
 
 	if (major_revision == 0) {
 		xhci_warn(xhci, "Event for port %u not in "
@@ -3531,6 +3593,16 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	/* Save the DMA address of the last TRB in the TD */
 	td->last_trb = ep_ring->enqueue;
 
+	if ((xhci->quirks & XHCI_CTRL_NYET_ABNORMAL) &&
+			(setup->bRequestType & USB_DIR_IN)) {
+		xhci_dbg(xhci, "delay status stage\n");
+		giveback_first_trb(xhci, slot_id, ep_index, 0,
+				start_cycle, start_trb);
+		wmb();
+
+		mdelay(2);
+	}
+
 	/* Queue status TRB - see Table 7 and sections 4.11.2.2 and 6.4.1.2.3 */
 	/* If the device sent data, the status stage is an OUT transfer */
 	if (urb->transfer_buffer_length > 0 && setup->bRequestType & USB_DIR_IN)
@@ -3544,8 +3616,13 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 			/* Event on completion */
 			field | TRB_IOC | TRB_TYPE(TRB_STATUS) | ep_ring->cycle_state);
 
-	giveback_first_trb(xhci, slot_id, ep_index, 0,
-			start_cycle, start_trb);
+	if ((xhci->quirks & XHCI_CTRL_NYET_ABNORMAL) &&
+			(setup->bRequestType & USB_DIR_IN))
+		xhci_ring_ep_doorbell(xhci, slot_id, ep_index, 0);
+	else
+		giveback_first_trb(xhci, slot_id, ep_index, 0,
+				start_cycle, start_trb);
+
 	return 0;
 }
 

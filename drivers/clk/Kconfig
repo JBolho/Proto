@@ -9,6 +9,15 @@ config HAVE_CLK_PREPARE
 config HAVE_MACH_CLKDEV
 	bool
 
+config HISI_CLK_DEBUG
+	bool "Clock Debug driver for ARM Reference designs"
+	---help---
+	  Clock Debug driver for ARM Reference designs.
+
+config HISI_CLK_TRACE
+	bool "Clock Debug driver for CLK TRACE"
+	default n
+
 config COMMON_CLK
 	bool
 	select HAVE_CLK_PREPARE
@@ -194,6 +203,8 @@ source "drivers/clk/qcom/Kconfig"
 
 endmenu
 
+source "drivers/clk/hisi/Kconfig"
+source "drivers/clk/hisi/peri_dvfs/Kconfig"
 source "drivers/clk/mvebu/Kconfig"
 
 source "drivers/clk/samsung/Kconfig"

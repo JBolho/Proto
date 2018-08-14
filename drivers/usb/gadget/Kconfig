@@ -127,6 +127,12 @@ config USB_GADGET_STORAGE_NUM_BUFFERS
 	   a module parameter as well.
 	   If unsure, say 2.
 
+config HISI_USB_FUNC_ADD_SS_DESC
+	boolean "USB Gadget functions support superspeed"
+	default y
+	help
+	  USB Gadget functions support superspeed.
+
 source "drivers/usb/gadget/udc/Kconfig"
 
 #
@@ -198,6 +204,31 @@ config USB_F_HID
 
 config USB_F_PRINTER
 	tristate
+
+config USB_F_MTP
+	tristate
+
+config USB_F_PTP
+        tristate
+
+config USB_F_AUDIO_SRC
+	tristate
+
+config USB_F_ACC
+	tristate
+
+config USB_F_BALONG_ACM
+	tristate
+
+config USB_HW_F_ACM
+	tristate
+
+config USB_MASS_STORAGE_SUPPORT_MAC
+	bool "Mass Storage support MAC system"
+	depends on USB_F_MASS_STORAGE
+	help
+	  Mass Storage support MAC system.
+
 
 choice
 	tristate "USB Gadget Drivers"
@@ -371,6 +402,44 @@ config USB_CONFIGFS_F_FS
 	  implemented in kernel space (for instance Ethernet, serial or
 	  mass storage) and other are implemented in user space.
 
+config USB_CONFIGFS_F_MTP
+	boolean "MTP gadget"
+	depends on USB_CONFIGFS
+	select USB_F_MTP
+	help
+	  USB gadget MTP support
+
+config USB_CONFIGFS_F_PTP
+	boolean "PTP gadget"
+	depends on USB_CONFIGFS && USB_CONFIGFS_F_MTP
+	select USB_F_PTP
+	help
+	  USB gadget PTP support
+
+config USB_CONFIGFS_F_ACC
+	boolean "Accessory gadget"
+	depends on USB_CONFIGFS
+	select USB_F_ACC
+	help
+	  USB gadget Accessory support
+
+config USB_CONFIGFS_F_AUDIO_SRC
+	boolean "Audio Source gadget"
+	depends on USB_CONFIGFS && USB_CONFIGFS_F_ACC
+	depends on SND
+	select SND_PCM
+	select USB_F_AUDIO_SRC
+	help
+	  USB gadget Audio Source support
+
+config USB_CONFIGFS_UEVENT
+	boolean "Uevent notification of Gadget state"
+	depends on USB_CONFIGFS
+	help
+	  Enable uevent notifications to userspace when the gadget
+	  state changes. The gadget can be in any of the following
+	  three states: "CONNECTED/DISCONNECTED/CONFIGURED"
+
 config USB_CONFIGFS_F_UAC1
 	bool "Audio Class 1.0"
 	depends on USB_CONFIGFS
@@ -450,6 +519,26 @@ config USB_CONFIGFS_F_PRINTER
 
 	  For more information, see Documentation/usb/gadget_printer.txt
 	  which includes sample code for accessing the device file.
+
+config USB_CONFIGFS_BALONG_ACM
+	bool "HUAWEI BALONG ACM function"
+	depends on USB_CONFIGFS
+	select USB_F_BALONG_ACM
+	help
+	  ACM function used for HUAWEI Modem.
+
+config USB_CONFIGFS_HW_ACM
+	bool "HUAWEI ACM function"
+	depends on USB_CONFIGFS
+	select USB_HW_F_ACM
+	help
+	  ACM function used for HUAWEI manufacture mode.
+
+config HISI_USB_CONFIGFS
+	bool "USB Gadget set up through configfs in Hisilicon platforms"
+	depends on USB_CONFIGFS
+	help
+	  USB Gadget set up through configfs in Hisilicon platforms.
 
 source "drivers/usb/gadget/legacy/Kconfig"
 

@@ -107,16 +107,28 @@ EXPORT_SYMBOL_GPL(tcp_vegas_init);
  *   o min-filter RTT samples from a much longer window (forever for now)
  *     to find the propagation delay (baseRTT)
  */
+#ifdef CONFIG_TCP_CONG_BBR
+void tcp_vegas_pkts_acked(struct sock *sk, const struct ack_sample *sample)
+#else
 void tcp_vegas_pkts_acked(struct sock *sk, u32 cnt, s32 rtt_us)
+#endif
 {
 	struct vegas *vegas = inet_csk_ca(sk);
 	u32 vrtt;
 
+#ifdef CONFIG_TCP_CONG_BBR
+	if (sample->rtt_us < 0)
+#else
 	if (rtt_us < 0)
+#endif
 		return;
 
 	/* Never allow zero rtt or baseRTT */
+#ifdef CONFIG_TCP_CONG_BBR
+	vrtt = sample->rtt_us + 1;
+#else
 	vrtt = rtt_us + 1;
+#endif
 
 	/* Filter to find propagation delay: */
 	if (vrtt < vegas->baseRTT)

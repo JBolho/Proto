@@ -61,6 +61,22 @@ config SPARSEMEM_MANUAL
 
 endchoice
 
+config SHRINK_MEMORY
+	bool "Allow for system-wide shrinking of memory"
+	default n
+	depends on MMU
+	help
+	It ebable support for system-wide memory reclaim in one shot using
+	echo 1 > /proc/sys/vm/shrink_memory
+
+config SHRINK_MEMORY_CANCEL
+	bool "Allow cancel shrink_memory triggered by sysctl"
+	depends on SHRINK_MEMORY
+	default n
+	help
+	  echo 0 > /proc/sys/vm/shrink_memory.
+	  You can cancel by this.
+
 config DISCONTIGMEM
 	def_bool y
 	depends on (!SELECT_MEMORY_MODEL && ARCH_DISCONTIGMEM_ENABLE) || DISCONTIGMEM_MANUAL
@@ -506,6 +522,12 @@ config CMA_DEBUGFS
 	help
 	  Turns on the DebugFS interface for CMA.
 
+config HISI_CMA_DEBUG
+	bool "Hisilicon CMA debug log"
+	depends on CMA
+	help
+	  Turns on the debug log for hisilicon cma_alloc fail.
+
 config CMA_AREAS
 	int "Maximum count of the CMA areas"
 	depends on CMA
@@ -668,3 +690,135 @@ config ZONE_DEVICE
 
 config FRAME_VECTOR
 	bool
+
+config PROCESS_RECLAIM
+	bool "Enable process reclaim"
+	depends on PROC_FS
+	default n
+	help
+	 It allows to reclaim pages of the process by /proc/pid/reclaim.
+
+	 (echo file > /proc/PID/reclaim) reclaims file-backed pages only.
+	 (echo anon > /proc/PID/reclaim) reclaims anonymous pages only.
+	 (echo all > /proc/PID/reclaim) reclaims all pages.
+	 (echo swapin > /proc/PID/reclaim) swapin all swaped pages.
+
+	 (echo addr size-byte > /proc/PID/reclaim) reclaims pages in
+	 (addr, addr + size-bytes) of the process.
+
+	 Any other vaule is ignored.
+
+config HISI_SWAP_ZDATA
+	bool "Compressed data to swap"
+	depends on SWAP
+	depends on PROCESS_RECLAIM
+	default n
+	help
+	  Save compressed data to swap page.
+
+	  If unsure, say Y to enable swap_zdata.
+
+config HISI_DIRECT_SWAPPINESS
+	bool "Allow to adjust direct reclaim swappiness"
+	depends on SWAP && PROC_FS
+	default n
+	help
+	  Used to adjust direct reclaim cmpress priority by /proc/sys/vm/direct_swappiness.
+
+	  only 0 to 60 is valid. If unsure, say N to use it's original value(60).
+
+config HISI_PAGECACHE_HELPER
+	tristate "KIRIN page cache helper module"
+	default n
+
+	---help---
+	This selects the Kirin page cache helper module.
+
+	Select this if you want to optimize your Android system.
+	If unsure, say N.
+
+config HISI_PAGECACHE_DEBUG
+	tristate "KIRIN page cache trace module"
+	default n
+	depends on HISI_DEBUG_FS
+
+	---help---
+	This selects the Kirin page cache trace module.
+
+	Select this if you want to optimize your Android system.
+	If unsure, say N.
+
+config DEBUG_VMALLOC
+	bool "Enable VMALLOC debugging support"
+	default n
+	help
+	  This enables the inclusion of a few debugging parameters, which
+	  are the PID and the name of the task requesting vmalloc.
+
+	  Disabling these can result in savings in code size.
+
+config HISI_FALLBACK_MOVEABLE
+	bool "Steal memory from moveable's fallbacks"
+	help
+	  If this option is enabled,when migratetype is movable,
+	  we can steal memory form  fallbacks[movable].
+	  This may have a performance impact on alloc stall.
+
+	  If in doubt, say N
+
+config HISI_STRONG_BALANCE
+	bool "Strong pgdat balance"
+	help
+	  If this option is enabled, the total of balanced pages must be at least 50%
+	  of the zones allowed by classzone_idx for the node to be considered balanced.
+	  It can cause excessive reclaim when there are imbalanced zones.
+	  This may have a performance impact.
+
+	  If in doubt, say N
+config HISI_THREADINFO_NORMAL_ZONE
+	bool "Alloc threadinfo in  normal zone"
+	help
+	  If this option is enabled,  we can use the normal zone for threadinfo,
+	  otherwise,we can only use the dma zone.
+	  This may have a performance impact and reduce fragmentation.
+
+	  If in doubt, say N
+
+config HISI_RESORT_ZONE_FREELIST
+	bool "for memory performance opt resort the zone freelist"
+	default n
+	help
+	  If this option is enabled, we resort the zone freelist in mem init.
+	  This may have a performance improvement in memory test.
+
+	  If in doubt, say N
+
+config HUAWEI_UNMOVABLE_ISOLATE
+	bool "Isolate the unmovable memory."
+	depends on ARM64
+	default n
+	  help
+	  Isolate the unmovable memory from others migrate types.
+	  So that we can improve the success rate of compact.
+
+	  If unsure, say "n".
+
+config HUAWEI_UNMOVABLE_ISOLATE1_SIZE_MBYTES
+	int "Size in Mega Bytes For UNMOVABLE_ISOLATE1"
+	depends on HUAWEI_UNMOVABLE_ISOLATE
+	default 64
+	help
+	  Defines the size (in MiB) of the default memory area for
+	  MIGRATE_UNMOVABLE_ISOLATE1 Memory Allocator. However,
+	  we should parse the size from /proc/cmdline firstly.
+
+config HUAWEI_UNMOVABLE_ISOLATE2_SIZE_MBYTES
+	int "Size in Mega Bytes For UNMOVABLE_ISOLATE2"
+	depends on HUAWEI_UNMOVABLE_ISOLATE
+	default 64
+	help
+	  Defines the size (in MiB) of the default memory area for
+	  MIGRATE_UNMOVABLE_ISOLATE2 Memory Allocator. However,
+	  we should parse the size from /proc/cmdline firstly.
+
+source "mm/hisi/Kconfig"

@@ -286,9 +286,10 @@ void pci_bus_add_device(struct pci_dev *dev)
 	 * are not assigned yet for some devices.
 	 */
 	pci_fixup_device(pci_fixup_final, dev);
+#ifndef CONFIG_PCIE_KIRIN
 	pci_create_sysfs_dev_files(dev);
 	pci_proc_attach_device(dev);
-
+#endif
 	dev->match_driver = true;
 	retval = device_attach(&dev->dev);
 	WARN_ON(retval < 0);

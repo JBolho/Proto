@@ -33,7 +33,9 @@
 #include <linux/wait.h>
 #include <linux/rpmsg.h>
 #include <linux/mutex.h>
-
+#include <linux/iommu.h>
+#include <linux/remoteproc.h>
+#include <linux/platform_data/remoteproc-hisi.h>
 /**
  * struct virtproc_info - virtual remote processor state
  * @vdev:	the virtio device
@@ -130,10 +132,10 @@ field##_show(struct device *dev,					\
 }
 
 /* for more info, see Documentation/ABI/testing/sysfs-bus-rpmsg */
-rpmsg_show_attr(name, id.name, "%s\n");
-rpmsg_show_attr(src, src, "0x%x\n");
-rpmsg_show_attr(dst, dst, "0x%x\n");
-rpmsg_show_attr(announce, announce ? "true" : "false", "%s\n");
+rpmsg_show_attr(name, id.name, "%s\n"); /*lint !e421*/
+rpmsg_show_attr(src, src, "0x%x\n"); /*lint !e421*/
+rpmsg_show_attr(dst, dst, "0x%x\n"); /*lint !e421*/
+rpmsg_show_attr(announce, announce ? "true" : "false", "%s\n"); /*lint !e421 !e665*/
 
 /*
  * Unique (and free running) index for rpmsg devices.
@@ -142,13 +144,14 @@ rpmsg_show_attr(announce, announce ? "true" : "false", "%s\n");
  * to change if/when we want to.
  */
 static unsigned int rpmsg_dev_index;
+struct completion channel_sync;
 
 static ssize_t modalias_show(struct device *dev,
 			     struct device_attribute *attr, char *buf)
 {
 	struct rpmsg_channel *rpdev = to_rpmsg_channel(dev);
 
-	return sprintf(buf, RPMSG_DEVICE_MODALIAS_FMT "\n", rpdev->id.name);
+	return sprintf(buf, RPMSG_DEVICE_MODALIAS_FMT "\n", rpdev->id.name); /*lint !e421*/
 }
 
 static struct device_attribute rpmsg_dev_attrs[] = {
@@ -258,7 +261,7 @@ static struct rpmsg_endpoint *__rpmsg_create_ept(struct virtproc_info *vrp,
 free_ept:
 	mutex_unlock(&vrp->endpoints_lock);
 	kref_put(&ept->refcount, __ept_release);
-	return NULL;
+	return NULL; /*lint !e429*/
 }
 
 /**
@@ -541,8 +544,11 @@ static struct rpmsg_channel *rpmsg_create_channel(struct virtproc_info *vrp,
 	if (ret) {
 		dev_err(dev, "device_register failed: %d\n", ret);
 		put_device(&rpdev->dev);
-		return NULL;
+		return NULL; /*lint !e429*/
 	}
+
+	complete(&channel_sync);
+	rproc_set_sync_flag(true);
 
 	return rpdev;
 }
@@ -560,6 +566,8 @@ static int rpmsg_destroy_channel(struct virtproc_info *vrp,
 	dev = device_find_child(&vdev->dev, chinfo, rpmsg_channel_match);
 	if (!dev)
 		return -EINVAL;
+
+	init_completion(&channel_sync);
 
 	device_unregister(dev);
 
@@ -581,8 +589,8 @@ static void *get_a_tx_buf(struct virtproc_info *vrp)
 	 * either pick the next unused tx buffer
 	 * (half of our buffers are used for sending messages)
 	 */
-	if (vrp->last_sbuf < vrp->num_bufs / 2)
-		ret = vrp->sbufs + RPMSG_BUF_SIZE * vrp->last_sbuf++;
+	if (vrp->last_sbuf < vrp->num_bufs / 2) /*lint !e574*/
+		ret = vrp->sbufs + RPMSG_BUF_SIZE * vrp->last_sbuf++; /*lint !e679*/
 	/* or recycle a used one */
 	else
 		ret = virtqueue_get_buf(vrp->svq, &len);
@@ -689,6 +697,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	struct device *dev = &rpdev->dev;
 	struct scatterlist sg;
 	struct rpmsg_hdr *msg;
+	dma_addr_t dma;
 	int err;
 
 	/* bcasting isn't allowed */
@@ -706,7 +715,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	 * messaging), or to improve the buffer allocator, to support
 	 * variable-length buffer sizes.
 	 */
-	if (len > RPMSG_BUF_SIZE - sizeof(struct rpmsg_hdr)) {
+	if (len > RPMSG_BUF_SIZE - sizeof(struct rpmsg_hdr)) { /*lint !e574*/
 		dev_err(dev, "message is too big (%d)\n", len);
 		return -EMSGSIZE;
 	}
@@ -729,7 +738,7 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 		 */
 		err = wait_event_interruptible_timeout(vrp->sendq,
 					(msg = get_a_tx_buf(vrp)),
-					msecs_to_jiffies(15000));
+					msecs_to_jiffies(15000)); /*lint !e666*/
 
 		/* disable "tx-complete" interrupts if we're the last sleeper */
 		rpmsg_downref_sleepers(vrp);
@@ -751,11 +760,16 @@ int rpmsg_send_offchannel_raw(struct rpmsg_channel *rpdev, u32 src, u32 dst,
 	dev_dbg(dev, "TX From 0x%x, To 0x%x, Len %d, Flags %d, Reserved %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
-	print_hex_dump(KERN_DEBUG, "rpmsg_virtio TX: ", DUMP_PREFIX_NONE, 16, 1,
+#ifndef CONFIG_HISI_REMOTEPROC
+    print_hex_dump(KERN_DEBUG, "rpmsg_virtio TX: ", DUMP_PREFIX_NONE, 16, 1,
 					msg, sizeof(*msg) + msg->len, true);
-
-	sg_init_one(&sg, msg, sizeof(*msg) + len);
-
+#endif
+#ifdef CONFIG_HISI_REMOTEPROC
+	dma = vrp->bufs_dma + (unsigned int)((void *)msg - (void *)vrp->rbufs);
+	virtqueue_sg_init(&sg, (void *)msg, dma, RPMSG_BUF_SIZE);
+#else
+    sg_init_one(&sg, msg, sizeof(*msg) + len);
+#endif
 	mutex_lock(&vrp->tx_lock);
 
 	/* add message to the remote processor's virtqueue */
@@ -783,14 +797,16 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 {
 	struct rpmsg_endpoint *ept;
 	struct scatterlist sg;
+	dma_addr_t dma;
 	int err;
 
 	dev_dbg(dev, "From: 0x%x, To: 0x%x, Len: %d, Flags: %d, Reserved: %d\n",
 					msg->src, msg->dst, msg->len,
 					msg->flags, msg->reserved);
+#ifndef CONFIG_HISI_REMOTEPROC
 	print_hex_dump(KERN_DEBUG, "rpmsg_virtio RX: ", DUMP_PREFIX_NONE, 16, 1,
 					msg, sizeof(*msg) + msg->len, true);
-
+#endif
 	/*
 	 * We currently use fixed-sized buffers, so trivially sanitize
 	 * the reported payload length.
@@ -826,9 +842,13 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 		kref_put(&ept->refcount, __ept_release);
 	} else
 		dev_warn(dev, "msg received with no recipient\n");
-
+#ifdef CONFIG_HISI_REMOTEPROC
+	dma = vrp->bufs_dma + (unsigned int)((void *)msg - (void *)vrp->rbufs);
+	virtqueue_sg_init(&sg, (void *)msg, dma, RPMSG_BUF_SIZE);
+#else
 	/* publish the real size of the buffer */
 	sg_init_one(&sg, msg, RPMSG_BUF_SIZE);
+#endif
 
 	/* add the buffer back to the remote processor's virtqueue */
 	err = virtqueue_add_inbuf(vrp->rvq, &sg, 1, msg, GFP_KERNEL);
@@ -861,7 +881,9 @@ static void rpmsg_recv_done(struct virtqueue *rvq)
 			break;
 
 		msgs_received++;
-
+#ifdef CONFIG_HISI_REMOTEPROC
+        hisp_recvin();
+#endif
 		msg = virtqueue_get_buf(rvq, &len);
 	};
 
@@ -931,6 +953,11 @@ static void rpmsg_ns_cb(struct rpmsg_channel *rpdev, void *data, int len,
 	chinfo.src = RPMSG_ADDR_ANY;
 	chinfo.dst = msg->addr;
 
+#ifdef CONFIG_HISI_REMOTEPROC
+	if (ISP_DEBUG_RPMSG_CLIENT == rpmsg_client_debug)
+		strncpy(chinfo.name, "rpmsg-isp-debug", sizeof(chinfo.name));
+#endif
+
 	if (msg->flags & RPMSG_NS_DESTROY) {
 		ret = rpmsg_destroy_channel(vrp, &chinfo);
 		if (ret)
@@ -949,10 +976,12 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	struct virtqueue *vqs[2];
 	struct virtproc_info *vrp;
 	void *bufs_va;
-	int err = 0, i;
+	int err = 0;
+        unsigned int i = 0;
 	size_t total_buf_space;
 	bool notify;
 
+	set_rpmsg_status(0);
 	vrp = kzalloc(sizeof(*vrp), GFP_KERNEL);
 	if (!vrp)
 		return -ENOMEM;
@@ -966,8 +995,10 @@ static int rpmsg_probe(struct virtio_device *vdev)
 
 	/* We expect two virtqueues, rx and tx (and in this order) */
 	err = vdev->config->find_vqs(vdev, 2, vqs, vq_cbs, names);
-	if (err)
+	if (err) {
+		pr_err("[%s]find_vqs failed!\n", __func__);
 		goto free_vrp;
+	}
 
 	vrp->rvq = vqs[0];
 	vrp->svq = vqs[1];
@@ -982,16 +1013,22 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	else
 		vrp->num_bufs = MAX_RPMSG_NUM_BUFS;
 
-	total_buf_space = vrp->num_bufs * RPMSG_BUF_SIZE;
+	total_buf_space = vrp->num_bufs * RPMSG_BUF_SIZE;/*lint !e647 */
 
 	/* allocate coherent memory for the buffers */
+#ifdef CONFIG_HISI_REMOTEPROC_DMAALLOC_DEBUG
+	bufs_va = get_vring_dma_addr(&vrp->bufs_dma, total_buf_space, 2);
+#else
 	bufs_va = dma_alloc_coherent(vdev->dev.parent->parent,
 				     total_buf_space, &vrp->bufs_dma,
 				     GFP_KERNEL);
+#endif
 	if (!bufs_va) {
 		err = -ENOMEM;
 		goto vqs_del;
 	}
+	vqs[0]->dma_base = vrp->bufs_dma;
+	vqs[1]->dma_base = vrp->bufs_dma;
 
 	dev_dbg(&vdev->dev, "buffers: va %p, dma 0x%llx\n", bufs_va,
 					(unsigned long long)vrp->bufs_dma);
@@ -1005,10 +1042,13 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	/* set up the receive buffers */
 	for (i = 0; i < vrp->num_bufs / 2; i++) {
 		struct scatterlist sg;
-		void *cpu_addr = vrp->rbufs + i * RPMSG_BUF_SIZE;
-
-		sg_init_one(&sg, cpu_addr, RPMSG_BUF_SIZE);
-
+		void *cpu_addr = vrp->rbufs + i * RPMSG_BUF_SIZE;/*lint !e679 */
+#ifdef CONFIG_HISI_REMOTEPROC
+		dma_addr_t dma = (dma_addr_t)(vrp->bufs_dma + i * RPMSG_BUF_SIZE);/*lint !e647 */
+		virtqueue_sg_init(&sg, cpu_addr, dma, RPMSG_BUF_SIZE);
+#else
+        sg_init_one(&sg, cpu_addr, RPMSG_BUF_SIZE);
+#endif
 		err = virtqueue_add_inbuf(vrp->rvq, &sg, 1, cpu_addr,
 								GFP_KERNEL);
 		WARN_ON(err); /* sanity check; this can't really happen */
@@ -1045,19 +1085,35 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	 * this might be concurrent with callbacks, but we are only
 	 * doing notify, not a full kick here, so that's ok.
 	 */
+#ifndef CONFIG_HISI_REMOTEPROC
 	if (notify)
 		virtqueue_notify(vrp->rvq);
+#endif
 
+#ifdef CONFIG_HISI_REMOTEPROC
+	err = rpmsg_vdev_map_resource(vdev, vrp->bufs_dma, MAX_RPMSG_NUM_BUFS * RPMSG_BUF_SIZE);
+	if (err) {
+		pr_err("[%s]iommu map failed!\n", __func__);
+		goto free_coherent;
+	}
+#endif
+
+	set_rpmsg_status(1);
 	dev_info(&vdev->dev, "rpmsg host is online\n");
 
 	return 0;
 
 free_coherent:
+	pr_err("[%s] failed, then free_coherent!\n", __func__);
+#ifndef CONFIG_HISI_REMOTEPROC_DMAALLOC_DEBUG
 	dma_free_coherent(vdev->dev.parent->parent, total_buf_space,
 			  bufs_va, vrp->bufs_dma);
+#endif
 vqs_del:
+	pr_err("[%s] failed, then vqs_del!\n", __func__);
 	vdev->config->del_vqs(vrp->vdev);
 free_vrp:
+	pr_err("[%s] failed, then free_vrp!\n", __func__);
 	kfree(vrp);
 	return err;
 }
@@ -1072,9 +1128,12 @@ static int rpmsg_remove_device(struct device *dev, void *data)
 static void rpmsg_remove(struct virtio_device *vdev)
 {
 	struct virtproc_info *vrp = vdev->priv;
-	size_t total_buf_space = vrp->num_bufs * RPMSG_BUF_SIZE;
+#ifndef CONFIG_HISI_REMOTEPROC_DMAALLOC_DEBUG
+	size_t total_buf_space = vrp->num_bufs * RPMSG_BUF_SIZE; /*lint !e647*/
+#endif
 	int ret;
 
+	pr_info("[%s] +\n", __func__);
 	vdev->config->reset(vdev);
 
 	ret = device_for_each_child(&vdev->dev, NULL, rpmsg_remove_device);
@@ -1087,11 +1146,13 @@ static void rpmsg_remove(struct virtio_device *vdev)
 	idr_destroy(&vrp->endpoints);
 
 	vdev->config->del_vqs(vrp->vdev);
-
+#ifndef CONFIG_HISI_REMOTEPROC_DMAALLOC_DEBUG
 	dma_free_coherent(vdev->dev.parent->parent, total_buf_space,
 			  vrp->rbufs, vrp->bufs_dma);
-
+#endif
 	kfree(vrp);
+	set_rpmsg_status(0);
+	pr_info("[%s] -\n", __func__);
 }
 
 static struct virtio_device_id id_table[] = {
@@ -1107,7 +1168,7 @@ static struct virtio_driver virtio_ipc_driver = {
 	.feature_table	= features,
 	.feature_table_size = ARRAY_SIZE(features),
 	.driver.name	= KBUILD_MODNAME,
-	.driver.owner	= THIS_MODULE,
+	.driver.owner	= THIS_MODULE, /*lint !e485*/
 	.id_table	= id_table,
 	.probe		= rpmsg_probe,
 	.remove		= rpmsg_remove,
@@ -1116,6 +1177,8 @@ static struct virtio_driver virtio_ipc_driver = {
 static int __init rpmsg_init(void)
 {
 	int ret;
+
+	init_completion(&channel_sync);
 
 	ret = bus_register(&rpmsg_bus);
 	if (ret) {

@@ -192,6 +192,31 @@ struct dma_buf *ion_share_dma_buf(struct ion_client *client,
 int ion_share_dma_buf_fd(struct ion_client *client, struct ion_handle *handle);
 
 /**
+ * ion_map_iommu() - create iommu mapping for the given handle
+ * @client:	the client
+ * @handle:	the handle
+ * @format:	the format of iommu mapping
+ */
+int ion_map_iommu(struct ion_client *client, struct ion_handle *handle,
+		struct iommu_map_format *format);
+
+/**
+ * ion_unmap_iommu() - destroy a iommu mapping for a handle
+ * @client:	the client
+ * @handle:	the handle
+ */
+void ion_unmap_iommu(struct ion_client *client, struct ion_handle *handle);
+
+/**
+ * ion_change_flags() - change buffer flags
+ * @client:	the client
+ * @handle:	the handle
+ * @flags: flags
+ */
+int ion_change_flags(struct ion_client *client,
+		struct ion_handle *handle, int flags);
+
+/**
  * ion_import_dma_buf() - given an dma-buf fd from the ion exporter get handle
  * @client:	the client
  * @fd:		the dma-buf fd
@@ -202,4 +227,11 @@ int ion_share_dma_buf_fd(struct ion_client *client, struct ion_handle *handle);
  */
 struct ion_handle *ion_import_dma_buf(struct ion_client *client, int fd);
 
+int ion_sync_for_cpu(struct ion_client *client, int fd);
+int ion_sync_for_device(struct ion_client *client, int fd);
+size_t ion_get_used_memory(struct ion_heap *heap);
+
+
+struct sg_table *ion_sg_table_nolock(struct ion_client *client,
+			      struct ion_handle *handle);
 #endif /* _LINUX_ION_H */

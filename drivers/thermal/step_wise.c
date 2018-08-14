@@ -70,7 +70,7 @@ static unsigned long get_target_state(struct thermal_instance *instance,
 					((cur_state + 1) < instance->lower ?
 					instance->lower : (cur_state + 1));
 		} else {
-			next_target = THERMAL_NO_TARGET;
+			next_target = THERMAL_NO_TARGET;/*lint !e501*/
 		}
 
 		return next_target;
@@ -92,7 +92,7 @@ static unsigned long get_target_state(struct thermal_instance *instance,
 	case THERMAL_TREND_DROPPING:
 		if (cur_state <= instance->lower) {
 			if (!throttle)
-				next_target = THERMAL_NO_TARGET;
+				next_target = THERMAL_NO_TARGET;/*lint !e501*/
 		} else {
 			next_target = cur_state - 1;
 			if (next_target > instance->upper)
@@ -102,7 +102,7 @@ static unsigned long get_target_state(struct thermal_instance *instance,
 	case THERMAL_TREND_DROP_FULL:
 		if (cur_state == instance->lower) {
 			if (!throttle)
-				next_target = THERMAL_NO_TARGET;
+				next_target = THERMAL_NO_TARGET;/*lint !e501*/
 		} else
 			next_target = instance->lower;
 		break;
@@ -166,12 +166,12 @@ static void thermal_zone_trip_update(struct thermal_zone_device *tz, int trip)
 			continue;
 
 		/* Activate a passive thermal instance */
-		if (old_target == THERMAL_NO_TARGET &&
-			instance->target != THERMAL_NO_TARGET)
+		if (old_target == THERMAL_NO_TARGET && /*lint !e501 !e650*/
+			instance->target != THERMAL_NO_TARGET) /*lint !e501*/
 			update_passive_instance(tz, trip_type, 1);
 		/* Deactivate a passive thermal instance */
-		else if (old_target != THERMAL_NO_TARGET &&
-			instance->target == THERMAL_NO_TARGET)
+		else if (old_target != THERMAL_NO_TARGET && /*lint !e501 !e650*/
+			instance->target == THERMAL_NO_TARGET) /*lint !e501*/
 			update_passive_instance(tz, trip_type, -1);
 
 		instance->initialized = true;

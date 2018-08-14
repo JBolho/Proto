@@ -230,6 +230,7 @@ struct scsi_varlen_cdb_hdr {
 #define ABORTED_COMMAND     0x0b
 #define VOLUME_OVERFLOW     0x0d
 #define MISCOMPARE          0x0e
+#define HIVV_INTERNEL     0x0C /*for hiVV*/
 
 
 /*

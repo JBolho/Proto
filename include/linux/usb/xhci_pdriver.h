@@ -22,6 +22,12 @@
  */
 struct usb_xhci_pdata {
 	unsigned	usb3_lpm_capable:1;
+	unsigned	ctrl_nyet_abnormal:1;
+#ifdef CONFIG_USB_DWC3_NYET_ABNORMAL
+	unsigned	hcd_local_mem:1;
+	unsigned	disable_lpm:1;
+	unsigned	not_support_sg:1;
+#endif
 };
 
 #endif /* __USB_CORE_XHCI_PDRIVER_H */

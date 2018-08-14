@@ -103,7 +103,7 @@ MODULE_PARM_DESC(scan, "sync, async or none");
 static unsigned int scsi_inq_timeout = SCSI_TIMEOUT/HZ + 18;
 
 module_param_named(inq_timeout, scsi_inq_timeout, uint, S_IRUGO|S_IWUSR);
-MODULE_PARM_DESC(inq_timeout, 
+MODULE_PARM_DESC(inq_timeout,
 		 "Timeout (in seconds) waiting for devices to answer INQUIRY."
 		 " Default is 20. Some devices may need more; most need less.");
 
@@ -274,7 +274,12 @@ static struct scsi_device *scsi_alloc_sdev(struct scsi_target *starget,
 	}
 	WARN_ON_ONCE(!blk_get_queue(sdev->request_queue));
 	sdev->request_queue->queuedata = sdev;
-
+#ifdef CONFIG_SCSI_UFS_INLINE_CRYPTO
+	if (sdev->host->crypto_enabled && !scsi_is_wlun(lun))
+		blk_queue_set_crypto_flag(sdev->request_queue);
+	else
+		blk_queue_clr_crypto_flag(sdev->request_queue);
+#endif
 	if (!shost_use_blk_mq(sdev->host)) {
 		blk_queue_init_tags(sdev->request_queue,
 				    sdev->host->cmd_per_lun, shost->bqt,
@@ -604,7 +609,7 @@ static int scsi_probe_lun(struct scsi_device *sdev, unsigned char *inq_result,
 			 * not-ready to ready transition [asc/ascq=0x28/0x0]
 			 * or power-on, reset [asc/ascq=0x29/0x0], continue.
 			 * INQUIRY should not yield UNIT_ATTENTION
-			 * but many buggy devices do so anyway. 
+			 * but many buggy devices do so anyway.
 			 */
 			if ((driver_byte(result) & DRIVER_SENSE) &&
 			    scsi_sense_valid(&sshdr)) {
@@ -852,7 +857,7 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 	 * Don't set the device offline here; rather let the upper
 	 * level drivers eval the PQ to decide whether they should
 	 * attach. So remove ((inq_result[0] >> 5) & 7) == 1 check.
-	 */ 
+	 */
 
 	sdev->inq_periph_qual = (inq_result[0] >> 5) & 7;
 	sdev->lockable = sdev->removable;
@@ -958,6 +963,8 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 
 	if (*bflags & BLIST_RETRY_HWERROR)
 		sdev->retry_hwerror = 1;
+	if (*bflags & BLIST_RESET_HWERROR) /*lint !e737*/
+		sdev->reset_hwerror = 1;
 
 	if (*bflags & BLIST_NO_DIF)
 		sdev->no_dif = 1;
@@ -1003,7 +1010,7 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 }
 
 #ifdef CONFIG_SCSI_LOGGING
-/** 
+/**
  * scsi_inq_str - print INQUIRY data from min to max index, strip trailing whitespace
  * @buf:   Output buffer with at least end-first+1 bytes of space
  * @inq:   Inquiry buffer (input)
@@ -1028,6 +1035,9 @@ static unsigned char *scsi_inq_str(unsigned char *buf, unsigned char *inq,
 }
 #endif
 
+#ifdef CONFIG_HISI_UFS_MANUAL_BKOPS
+extern int hisi_ufs_manual_bkops_config(struct request_queue *q, struct Scsi_Host *shost);
+#endif
 /**
  * scsi_probe_and_add_lun - probe a LUN, if a LUN is found add it
  * @starget:	pointer to target device structure
@@ -1165,6 +1175,9 @@ static int scsi_probe_and_add_lun(struct scsi_target *starget,
 			scsi_unlock_floptical(sdev, result);
 		}
 	}
+#ifdef CONFIG_HISI_UFS_MANUAL_BKOPS
+	hisi_ufs_manual_bkops_config(sdev->request_queue, shost);
+#endif /* CONFIG_HISI_UFS_MANUAL_BKOPS */
 
  out_free_result:
 	kfree(result);
@@ -1459,12 +1472,12 @@ retry:
  out_err:
 	kfree(lun_data);
  out:
-	scsi_device_put(sdev);
 	if (scsi_device_created(sdev))
 		/*
 		 * the sdev we used didn't appear in the report luns scan
 		 */
 		__scsi_remove_device(sdev);
+	scsi_device_put(sdev);
 	return ret;
 }
 
@@ -1507,7 +1520,7 @@ EXPORT_SYMBOL(__scsi_add_device);
 int scsi_add_device(struct Scsi_Host *host, uint channel,
 		    uint target, u64 lun)
 {
-	struct scsi_device *sdev = 
+	struct scsi_device *sdev =
 		__scsi_add_device(host, channel, target, lun, NULL);
 	if (IS_ERR(sdev))
 		return PTR_ERR(sdev);
@@ -1564,7 +1577,8 @@ static void __scsi_scan_target(struct device *parent, unsigned int channel,
 	 */
 	res = scsi_probe_and_add_lun(starget, 0, &bflags, NULL, rescan, NULL);
 	if (res == SCSI_SCAN_LUN_PRESENT || res == SCSI_SCAN_TARGET_PRESENT) {
-		if (scsi_report_lun_scan(starget, bflags, rescan) != 0)
+		if (shost->is_emulator
+		    || scsi_report_lun_scan(starget, bflags, rescan) != 0)
 			/*
 			 * The REPORT LUN did not scan the target,
 			 * do a sequential scan.
@@ -1615,6 +1629,7 @@ void scsi_scan_target(struct device *parent, unsigned int channel,
 		__scsi_scan_target(parent, channel, id, lun, rescan);
 		scsi_autopm_put_host(shost);
 	}
+
 	mutex_unlock(&shost->scan_mutex);
 }
 EXPORT_SYMBOL(scsi_scan_target);

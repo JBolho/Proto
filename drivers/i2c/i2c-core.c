@@ -617,8 +617,11 @@ static int i2c_generic_recovery(struct i2c_adapter *adap)
 	while (i++ < RECOVERY_CLK_CNT * 2) {
 		if (val) {
 			/* Break if SDA is high */
-			if (bri->get_sda && bri->get_sda(adap))
-					break;
+			if (bri->get_sda && bri->get_sda(adap)) {
+				dev_info(&adap->dev,
+					"i2c bus completed recovery, generated %d falling-rising edges\n", i / 2);
+				break;
+			}
 			/* SCL shouldn't be low here */
 			if (!bri->get_scl(adap)) {
 				dev_err(&adap->dev,
@@ -942,7 +945,11 @@ static int i2c_check_mux_children(struct device *dev, void *addrp)
 	return result;
 }
 
+#ifdef CONFIG_HUAWEI_TS
+int i2c_check_addr_busy(struct i2c_adapter *adapter, int addr)
+#else
 static int i2c_check_addr_busy(struct i2c_adapter *adapter, int addr)
+#endif
 {
 	struct i2c_adapter *parent = i2c_parent_is_i2c_adapter(adapter);
 	int result = 0;
@@ -1400,7 +1407,7 @@ static struct i2c_client *of_i2c_register_device(struct i2c_adapter *adap,
 
 	if (i2c_check_addr_validity(addr, info.flags)) {
 		dev_err(&adap->dev, "of_i2c: invalid addr=%x on %s\n",
-			info.addr, node->full_name);
+			addr, node->full_name);
 		return ERR_PTR(-EINVAL);
 	}
 

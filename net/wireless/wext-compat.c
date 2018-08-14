@@ -844,6 +844,7 @@ static int cfg80211_wext_giwfreq(struct net_device *dev,
 	}
 }
 
+#define MAX_INT_HW 0x7fff
 static int cfg80211_wext_siwtxpower(struct net_device *dev,
 				    struct iw_request_info *info,
 				    union iwreq_data *data, char *extra)
@@ -893,6 +894,10 @@ static int cfg80211_wext_siwtxpower(struct net_device *dev,
 		return 0;
 	}
 
+	if (dbm >= MAX_INT_HW)
+	{
+		return -EINVAL;
+	}
 	return rdev_set_tx_power(rdev, wdev, type, DBM_TO_MBM(dbm));
 }
 

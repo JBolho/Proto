@@ -69,6 +69,10 @@
 #include <net/tcp_states.h>
 #include <linux/net_tstamp.h>
 
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+#include <huawei_platform/emcom/smartcare/network_measurement/nm_types.h>
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
+
 struct cgroup;
 struct cgroup_subsys;
 #ifdef CONFIG_NET
@@ -243,6 +247,23 @@ struct sock_common {
 	/* public: */
 };
 
+#ifdef CONFIG_HW_CROSSLAYER_OPT
+/* cdn: Cross-layer Dropped Notification */
+#define MAX_CDN_QSIZE 256
+
+struct cdn_queue {
+	struct cdn_queue	*next;
+	u32			seq;
+	u32			padding;
+};
+
+struct cdn_entry {
+	struct cdn_queue	pool[MAX_CDN_QSIZE];
+	struct cdn_queue	*hint;
+	struct cdn_queue	*head;
+	int			index;
+};
+#endif
 struct cg_proto;
 /**
   *	struct sock - network layer representation of sockets
@@ -265,6 +286,7 @@ struct cg_proto;
   *	@sk_ll_usec: usecs to busypoll when there is no data
   *	@sk_allocation: allocation mode
   *	@sk_pacing_rate: Pacing rate (if supported by transport/packet scheduler)
+  *	@sk_pacing_status: Pacing status (requested, handled by sch_fq)
   *	@sk_max_pacing_rate: Maximum pacing rate (%SO_MAX_PACING_RATE)
   *	@sk_sndbuf: size of send buffer in bytes
   *	@sk_no_check_tx: %SO_NO_CHECK setting, set checksum in TX packets
@@ -387,12 +409,35 @@ struct sock {
 		struct socket_wq __rcu	*sk_wq;
 		struct socket_wq	*sk_wq_raw;
 	};
+
+#ifdef CONFIG_HUAWEI_BASTET
+	struct bastet_sock *bastet;
+	struct bastet_reconn *reconn;
+	int fg_Spec;
+	int fg_Step;
+	bool prio_channel;
+#endif
+#if defined(CONFIG_HUAWEI_BASTET) || defined(CONFIG_HUAWEI_XENGINE)
+	uint8_t acc_state;
+#endif
+
+#ifdef CONFIG_HW_DPIMARK_MODULE
+	unsigned int    sk_hwdpi_mark;
+#endif
+
+#ifdef CONFIG_HW_WIFIPRO
+	int wifipro_is_google_sock;
+	char wifipro_dev_name[IFNAMSIZ];
+#endif
+
 #ifdef CONFIG_XFRM
 	struct xfrm_policy __rcu *sk_policy[2];
 #endif
 	struct dst_entry	*sk_rx_dst;
 	struct dst_entry __rcu	*sk_dst_cache;
-	/* Note: 32bit hole on 64bit arches */
+#ifdef CONFIG_TCP_CONG_BBR
+	u32			sk_pacing_status; /* see enum sk_pacing */
+#endif
 	atomic_t		sk_wmem_alloc;
 	atomic_t		sk_omem_alloc;
 	int			sk_sndbuf;
@@ -446,6 +491,7 @@ struct sock {
 	void			*sk_security;
 #endif
 	__u32			sk_mark;
+	kuid_t			sk_uid;
 #ifdef CONFIG_CGROUP_NET_CLASSID
 	u32			sk_classid;
 #endif
@@ -457,7 +503,37 @@ struct sock {
 	int			(*sk_backlog_rcv)(struct sock *sk,
 						  struct sk_buff *skb);
 	void                    (*sk_destruct)(struct sock *sk);
+#ifdef CONFIG_HW_CROSSLAYER_OPT_DBG_MODULE
+	u32			start_seq;
+	u32			snd_id;
+	u32			nowrtt;
+	u32			fast_rexmit_cnts;
+	u32			timeout_rexmit_cnts;
+	u32			modem_drop_rexmit_cnts;
+	u32			undo_modem_drop_cnts;
+#endif
+#ifdef CONFIG_HW_CROSSLAYER_OPT
+	struct cdn_entry	*sk_dropped;
+	u32			undo_modem_drop_marker;
+	u32			cdn_hash_marker;
+#endif
+#ifdef CONFIG_HW_NETWORK_MEASUREMENT
+	unsigned int		sk_nm_uid;
+	struct tcp_statistics	*sk_tcp_statis;
+	union {
+		struct nm_http_entry	*sk_nm_http;
+		struct nm_dnsp_entry	*sk_nm_dnsp;
+	};
+#endif /* CONFIG_HW_NETWORK_MEASUREMENT */
 };
+
+#ifdef CONFIG_TCP_CONG_BBR
+enum sk_pacing {
+	SK_PACING_NONE          = 0,
+	SK_PACING_NEEDED        = 1,
+	SK_PACING_FQ            = 2,
+};
+#endif
 
 #define __sk_user_data(sk) ((*((void __rcu **)&(sk)->sk_user_data)))
 
@@ -1067,6 +1143,7 @@ struct proto {
 	void			(*destroy_cgroup)(struct mem_cgroup *memcg);
 	struct cg_proto		*(*proto_cgroup)(struct mem_cgroup *memcg);
 #endif
+	int			(*diag_destroy)(struct sock *sk, int err);
 };
 
 int proto_register(struct proto *prot, int alloc_slab);
@@ -1425,6 +1502,16 @@ static inline void sk_mem_uncharge(struct sock *sk, int size)
 	if (!sk_has_account(sk))
 		return;
 	sk->sk_forward_alloc += size;
+
+	/* Avoid a possible overflow.
+	 * TCP send queues can make this happen, if sk_mem_reclaim()
+	 * is not called and more than 2 GBytes are released at once.
+	 *
+	 * If we reach 2 MBytes, reclaim 1 MBytes right now, there is
+	 * no need to hold that much forward allocation anyway.
+	 */
+	if (unlikely(sk->sk_forward_alloc >= 1 << 21))
+		__sk_mem_reclaim(sk, 1 << 20);
 }
 
 static inline void sk_wmem_free_skb(struct sock *sk, struct sk_buff *skb)
@@ -1681,12 +1768,18 @@ static inline void sock_graft(struct sock *sk, struct socket *parent)
 	sk->sk_wq = parent->wq;
 	parent->sk = sk;
 	sk_set_socket(sk, parent);
+	sk->sk_uid = SOCK_INODE(parent)->i_uid;
 	security_sock_graft(sk, parent);
 	write_unlock_bh(&sk->sk_callback_lock);
 }
 
 kuid_t sock_i_uid(struct sock *sk);
 unsigned long sock_i_ino(struct sock *sk);
+
+static inline kuid_t sock_net_uid(const struct net *net, const struct sock *sk)
+{
+	return sk ? sk->sk_uid : make_kuid(net->user_ns, 0);
+}
 
 static inline u32 net_tx_rndhash(void)
 {

@@ -22,6 +22,10 @@
 #include <linux/gfp.h>
 #include <net/tcp.h>
 
+#ifdef CONFIG_HW_WIFIPRO
+#include <hwnet/ipv4/wifipro_tcp_monitor.h>
+#endif
+
 int sysctl_tcp_syn_retries __read_mostly = TCP_SYN_RETRIES;
 int sysctl_tcp_synack_retries __read_mostly = TCP_SYNACK_RETRIES;
 int sysctl_tcp_keepalive_time __read_mostly = TCP_KEEPALIVE_TIME;
@@ -31,6 +35,27 @@ int sysctl_tcp_retries1 __read_mostly = TCP_RETR1;
 int sysctl_tcp_retries2 __read_mostly = TCP_RETR2;
 int sysctl_tcp_orphan_retries __read_mostly;
 int sysctl_tcp_thin_linear_timeouts __read_mostly;
+
+#ifdef CONFIG_HUAWEI_MSS_AUTO_CHANGE
+#define TCP_MSS_REDUCE_SIZE (200)
+#define TCP_MSS_MIN_SIZE    (1200)
+void tcp_reduce_mss(struct inet_connection_sock *icsk, struct sock *sk)
+{
+	struct tcp_sock *tp = NULL;
+
+	if (icsk && sk) {
+		tp = tcp_sk(sk);
+		if (tp && tp->mss_cache > TCP_MSS_MIN_SIZE && tp->rx_opt.mss_clamp > TCP_MSS_MIN_SIZE) {
+			if (tp->mss_cache - TCP_MSS_REDUCE_SIZE < TCP_MSS_MIN_SIZE) {
+				tp->rx_opt.mss_clamp = TCP_MSS_MIN_SIZE;
+			} else {
+				tp->rx_opt.mss_clamp = tp->mss_cache - TCP_MSS_REDUCE_SIZE;
+			}
+			tcp_sync_mss(sk, icsk->icsk_pmtu_cookie);
+		}
+	}
+}
+#endif
 
 static void tcp_write_err(struct sock *sk)
 {
@@ -190,6 +215,9 @@ static int tcp_write_timeout(struct sock *sk)
 			}
 			/* Black hole detection */
 			tcp_mtu_probing(icsk, sk);
+#ifdef CONFIG_HUAWEI_MSS_AUTO_CHANGE
+			tcp_reduce_mss(icsk, sk);
+#endif
 
 			dst_negative_advice(sk);
 		}
@@ -223,7 +251,8 @@ void tcp_delack_timer_handler(struct sock *sk)
 
 	sk_mem_reclaim_partial(sk);
 
-	if (sk->sk_state == TCP_CLOSE || !(icsk->icsk_ack.pending & ICSK_ACK_TIMER))
+	if (((1 << sk->sk_state) & (TCPF_CLOSE | TCPF_LISTEN)) ||
+	    !(icsk->icsk_ack.pending & ICSK_ACK_TIMER))
 		goto out;
 
 	if (time_after(icsk->icsk_ack.timeout, jiffies)) {
@@ -254,6 +283,11 @@ void tcp_delack_timer_handler(struct sock *sk)
 			icsk->icsk_ack.pingpong = 0;
 			icsk->icsk_ack.ato      = TCP_ATO_MIN;
 		}
+#ifdef CONFIG_TCP_ARGO
+		if (tp->argo && tp->argo->delay_ack_nums)
+			/* Delay ack timeout, disable argo. */
+			tp->argo->delay_ack_nums = 0;
+#endif /* CONFIG_TCP_ARGO */
 		tcp_send_ack(sk);
 		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_DELAYEDACKS);
 	}
@@ -472,6 +506,13 @@ void tcp_retransmit_timer(struct sock *sk)
 	icsk->icsk_backoff++;
 	icsk->icsk_retransmits++;
 
+#ifdef CONFIG_HW_WIFIPRO
+	if (is_wifipro_on) {
+	    wifipro_handle_retrans(sk, icsk);
+	}
+#endif
+
+
 out_reset_timer:
 	/* If stream is thin, use linear timeouts. Since 'icsk_backoff' is
 	 * used to reset timer, set to 0. Recalculate 'icsk_rto' as this
@@ -504,7 +545,8 @@ void tcp_write_timer_handler(struct sock *sk)
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	int event;
 
-	if (sk->sk_state == TCP_CLOSE || !icsk->icsk_pending)
+	if (((1 << sk->sk_state) & (TCPF_CLOSE | TCPF_LISTEN)) ||
+	    !icsk->icsk_pending)
 		goto out;
 
 	if (time_after(icsk->icsk_timeout, jiffies)) {
@@ -660,4 +702,9 @@ void tcp_init_xmit_timers(struct sock *sk)
 {
 	inet_csk_init_xmit_timers(sk, &tcp_write_timer, &tcp_delack_timer,
 				  &tcp_keepalive_timer);
+#ifdef CONFIG_TCP_CONG_BBR
+	hrtimer_init(&tcp_sk(sk)->pacing_timer, CLOCK_MONOTONIC,
+		     HRTIMER_MODE_ABS_PINNED);
+	tcp_sk(sk)->pacing_timer.function = tcp_pace_kick;
+#endif
 }

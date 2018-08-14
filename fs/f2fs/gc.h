@@ -8,6 +8,11 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
+#include <linux/ratelimit.h>
+
+#define F2FS_GC_DSM_INTERVAL      (200 * HZ)
+#define F2FS_GC_DSM_BURST         2
+
 #define GC_THREAD_MIN_WB_PAGES		1	/*
 						 * a threshold to determine
 						 * whether IO subsystem is idle
@@ -22,17 +27,11 @@
 /* Search max. number of dirty segments to select a victim segment */
 #define DEF_MAX_VICTIM_SEARCH 4096 /* covers 8GB */
 
-struct f2fs_gc_kthread {
-	struct task_struct *f2fs_gc_task;
-	wait_queue_head_t gc_wait_queue_head;
-
-	/* for gc sleep time */
-	unsigned int min_sleep_time;
-	unsigned int max_sleep_time;
-	unsigned int no_gc_sleep_time;
-
-	/* for changing gc mode */
-	unsigned int gc_idle;
+/* GC preferences */
+enum {
+	GC_LIFETIME = 0,
+	GC_BALANCE,
+	GC_PERF
 };
 
 struct gc_inode_list {
@@ -99,12 +98,4 @@ static inline bool has_enough_invalid_blocks(struct f2fs_sb_info *sbi)
 			free_user_blocks(sbi) < limit_free_user_blocks(sbi))
 		return true;
 	return false;
-}
-
-static inline int is_idle(struct f2fs_sb_info *sbi)
-{
-	struct block_device *bdev = sbi->sb->s_bdev;
-	struct request_queue *q = bdev_get_queue(bdev);
-	struct request_list *rl = &q->root_rl;
-	return !(rl->count[BLK_RW_SYNC]) && !(rl->count[BLK_RW_ASYNC]);
 }
