@@ -724,7 +724,7 @@ struct dentry *debugfs_rename(struct dentry *old_dir, struct dentry *old_dentry,
 {
 	int error;
 	struct dentry *dentry = NULL, *trap;
-	struct name_snapshot old_name;
+	const char *old_name;
 
 	trap = lock_rename(new_dir, old_dir);
 	/* Source or destination directories don't exist? */
@@ -739,19 +739,19 @@ struct dentry *debugfs_rename(struct dentry *old_dir, struct dentry *old_dentry,
 	if (IS_ERR(dentry) || dentry == trap || d_really_is_positive(dentry))
 		goto exit;
 
-	take_dentry_name_snapshot(&old_name, old_dentry);
+	old_name = fsnotify_oldname_init(old_dentry->d_name.name);
 
 	error = simple_rename(d_inode(old_dir), old_dentry, d_inode(new_dir),
 		dentry);
 	if (error) {
-		release_dentry_name_snapshot(&old_name);
+		fsnotify_oldname_free(old_name);
 		goto exit;
 	}
 	d_move(old_dentry, dentry);
-	fsnotify_move(d_inode(old_dir), d_inode(new_dir), old_name.name,
+	fsnotify_move(d_inode(old_dir), d_inode(new_dir), old_name,
 		d_is_dir(old_dentry),
 		NULL, old_dentry);
-	release_dentry_name_snapshot(&old_name);
+	fsnotify_oldname_free(old_name);
 	unlock_rename(new_dir, old_dir);
 	dput(dentry);
 	return old_dentry;
