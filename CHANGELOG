@@ -1,7 +1,7 @@
 [Current Dev Status]
 
-- Upgrade to Linaro GCC 5.5-2017.10 and Optimize to big.LITTLE
-- Upstreamed to 4.4.75
+- Upgrade to Linaro GCC 5.5-2017.10
+- Upstreamed to 4.4.76
 - Port HiSi JPEG Processing Engine
 
 Version 2.5R - 081718 [GPU Supercharger Edition]
