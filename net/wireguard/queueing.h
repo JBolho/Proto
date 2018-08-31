@@ -26,8 +26,9 @@ struct multicore_worker __percpu *packet_alloc_percpu_multicore_worker(work_func
 /* receive.c APIs: */
 void packet_receive(struct wireguard_device *wg, struct sk_buff *skb);
 void packet_handshake_receive_worker(struct work_struct *work);
-/* Workqueue workers: */
-void packet_rx_worker(struct work_struct *work);
+/* NAPI poll function: */
+int packet_rx_poll(struct napi_struct *napi, int budget);
+/* Workqueue worker: */
 void packet_decrypt_worker(struct work_struct *work);
 
 /* send.c APIs: */
@@ -46,6 +47,7 @@ struct packet_cb {
 	u64 nonce;
 	struct noise_keypair *keypair;
 	atomic_t state;
+	u32 mtu;
 	u8 ds;
 };
 #define PACKET_PEER(skb) (((struct packet_cb *)skb->cb)->keypair->entry.peer)
@@ -63,8 +65,10 @@ static inline __be16 skb_examine_untrusted_ip_hdr(struct sk_buff *skb)
 
 static inline void skb_reset(struct sk_buff *skb)
 {
+	const int pfmemalloc = skb->pfmemalloc;
 	skb_scrub_packet(skb, true);
 	memset(&skb->headers_start, 0, offsetof(struct sk_buff, headers_end) - offsetof(struct sk_buff, headers_start));
+	skb->pfmemalloc = pfmemalloc;
 	skb->queue_mapping = 0;
 	skb->nohdr = 0;
 	skb->peeked = 0;
@@ -116,9 +120,15 @@ static inline int queue_enqueue_per_device_and_peer(struct crypt_queue *device_q
 {
 	int cpu;
 
-	atomic_set(&PACKET_CB(skb)->state, PACKET_STATE_UNCRYPTED);
+	atomic_set_release(&PACKET_CB(skb)->state, PACKET_STATE_UNCRYPTED);
+	/* We first queue this up for the peer ingestion, but the consumer
+	 * will wait for the state to change to CRYPTED or DEAD before.
+	 */
 	if (unlikely(ptr_ring_produce_bh(&peer_queue->ring, skb)))
 		return -ENOSPC;
+	/* Then we queue it up in the device queue, which consumes the
+	 * packet as soon as it can.
+	 */
 	cpu = cpumask_next_online(next_cpu);
 	if (unlikely(ptr_ring_produce_bh(&device_queue->ring, skb)))
 		return -EPIPE;
@@ -128,10 +138,23 @@ static inline int queue_enqueue_per_device_and_peer(struct crypt_queue *device_q
 
 static inline void queue_enqueue_per_peer(struct crypt_queue *queue, struct sk_buff *skb, enum packet_state state)
 {
-	struct wireguard_peer *peer = peer_rcu_get(PACKET_PEER(skb));
-
-	atomic_set(&PACKET_CB(skb)->state, state);
+	/* We take a reference, because as soon as we call atomic_set, the
+	 * peer can be freed from below us.
+	 */
+	struct wireguard_peer *peer = peer_get(PACKET_PEER(skb));
+	atomic_set_release(&PACKET_CB(skb)->state, state);
 	queue_work_on(cpumask_choose_online(&peer->serial_work_cpu, peer->internal_id), peer->device->packet_crypt_wq, &queue->work);
+	peer_put(peer);
+}
+
+static inline void queue_enqueue_per_peer_napi(struct crypt_queue *queue, struct sk_buff *skb, enum packet_state state)
+{
+	/* We take a reference, because as soon as we call atomic_set, the
+	 * peer can be freed from below us.
+	 */
+	struct wireguard_peer *peer = peer_get(PACKET_PEER(skb));
+	atomic_set_release(&PACKET_CB(skb)->state, state);
+	napi_schedule(&peer->napi);
 	peer_put(peer);
 }
 

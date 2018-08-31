@@ -37,7 +37,7 @@ static int open(struct net_device *dev)
 	struct in_device *dev_v4 = __in_dev_get_rtnl(dev);
 
 	if (dev_v4) {
-		/* TODO: when we merge to mainline, put this check near the ip_rt_send_redirect
+		/* TODO: at some point we might put this check near the ip_rt_send_redirect
 		 * call of ip_forward in net/ipv4/ip_forward.c, similar to the current secpath
 		 * check, rather than turning it off like this. This is just a stop gap solution
 		 * while we're an out of tree module.
@@ -105,7 +105,7 @@ static int stop(struct net_device *dev)
 		timers_stop(peer);
 		noise_handshake_clear(&peer->handshake);
 		noise_keypairs_clear(&peer->keypairs);
-		peer->last_sent_handshake = get_jiffies_64() - REKEY_TIMEOUT - HZ;
+		atomic64_set(&peer->last_sent_handshake, ktime_get_boot_fast_ns() - (u64)(REKEY_TIMEOUT + 1) * NSEC_PER_SEC);
 	}
 	mutex_unlock(&wg->device_update_lock);
 	skb_queue_purge(&wg->incoming_handshakes);
@@ -120,6 +120,7 @@ static netdev_tx_t xmit(struct sk_buff *skb, struct net_device *dev)
 	struct sk_buff *next;
 	struct sk_buff_head packets;
 	sa_family_t family;
+	u32 mtu;
 	int ret;
 
 	if (unlikely(skb_examine_untrusted_ip_hdr(skb) != skb->protocol)) {
@@ -131,7 +132,10 @@ static netdev_tx_t xmit(struct sk_buff *skb, struct net_device *dev)
 	peer = allowedips_lookup_dst(&wg->peer_allowedips, skb);
 	if (unlikely(!peer)) {
 		ret = -ENOKEY;
-		net_dbg_skb_ratelimited("%s: No peer is configured for %pISc\n", dev->name, skb);
+		if (skb->protocol == htons(ETH_P_IP))
+			net_dbg_ratelimited("%s: No peer has allowed IPs matching %pI4\n", dev->name, &ip_hdr(skb)->daddr);
+		else if (skb->protocol == htons(ETH_P_IPV6))
+			net_dbg_ratelimited("%s: No peer has allowed IPs matching %pI6\n", dev->name, &ipv6_hdr(skb)->daddr);
 		goto err;
 	}
 
@@ -141,6 +145,8 @@ static netdev_tx_t xmit(struct sk_buff *skb, struct net_device *dev)
 		net_dbg_ratelimited("%s: No valid endpoint has been configured or discovered for peer %llu\n", dev->name, peer->internal_id);
 		goto err_peer;
 	}
+
+	mtu = skb_dst(skb) ? dst_mtu(skb_dst(skb)) : dev->mtu;
 
 	__skb_queue_head_init(&packets);
 	if (!skb_is_gso(skb))
@@ -167,6 +173,8 @@ static netdev_tx_t xmit(struct sk_buff *skb, struct net_device *dev)
 		 * so at this point we're in a position to drop it.
 		 */
 		skb_dst_drop(skb);
+
+		PACKET_CB(skb)->mtu = mtu;
 
 		__skb_queue_tail(&packets, skb);
 	} while ((skb = next) != NULL);
@@ -214,14 +222,14 @@ static void destruct(struct net_device *dev)
 	mutex_lock(&wg->device_update_lock);
 	wg->incoming_port = 0;
 	socket_reinit(wg, NULL, NULL);
+	allowedips_free(&wg->peer_allowedips, &wg->device_update_lock);
 	peer_remove_all(wg); /* The final references are cleared in the below calls to destroy_workqueue. */
 	destroy_workqueue(wg->handshake_receive_wq);
 	destroy_workqueue(wg->handshake_send_wq);
+	destroy_workqueue(wg->packet_crypt_wq);
 	packet_queue_free(&wg->decrypt_queue, true);
 	packet_queue_free(&wg->encrypt_queue, true);
-	destroy_workqueue(wg->packet_crypt_wq);
 	rcu_barrier_bh(); /* Wait for all the peers to be actually freed. */
-	allowedips_free(&wg->peer_allowedips, &wg->device_update_lock);
 	ratelimiter_uninit();
 	memzero_explicit(&wg->static_identity, sizeof(struct noise_static_identity));
 	skb_queue_purge(&wg->incoming_handshakes);

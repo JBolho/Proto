@@ -48,11 +48,6 @@ static const u8 blake2s_sigma[10][16] = {
 	{10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0},
 };
 
-static inline u32 le32_to_cpuvp(const void *p)
-{
-	return le32_to_cpup(p);
-}
-
 static inline void blake2s_set_lastblock(struct blake2s_state *state)
 {
 	if (state->last_node)
@@ -125,16 +120,16 @@ void __init blake2s_fpu_init(void)
 #endif
 }
 #ifdef CONFIG_AS_AVX
-asmlinkage void blake2s_compress_avx(struct blake2s_state *state, const u8 *block, size_t nblocks, u32 inc);
+asmlinkage void blake2s_compress_avx(struct blake2s_state *state, const u8 *block, const size_t nblocks, const u32 inc);
 #endif
 #ifdef CONFIG_AS_AVX512
-asmlinkage void blake2s_compress_avx512(struct blake2s_state *state, const u8 *block, size_t nblocks, u32 inc);
+asmlinkage void blake2s_compress_avx512(struct blake2s_state *state, const u8 *block, const size_t nblocks, const u32 inc);
 #endif
 #else
 void __init blake2s_fpu_init(void) { }
 #endif
 
-static inline void blake2s_compress(struct blake2s_state *state, const u8 *block, size_t nblocks, u32 inc)
+static inline void blake2s_compress(struct blake2s_state *state, const u8 *block, size_t nblocks, const u32 inc)
 {
 	u32 m[16];
 	u32 v[16];

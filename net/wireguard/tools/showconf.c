@@ -5,6 +5,7 @@
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
 #include <net/if.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -32,7 +33,7 @@ int showconf_main(int argc, char *argv[])
 	}
 
 	if (ipc_get_device(&device, argv[1])) {
-		perror("Unable to get device");
+		perror("Unable to access interface");
 		goto cleanup;
 	}
 

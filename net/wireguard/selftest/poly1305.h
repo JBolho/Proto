@@ -1487,7 +1487,7 @@ static const struct poly1305_testvec poly1305_testvecs[] = {
 
 bool __init poly1305_selftest(void)
 {
-	bool have_simd = chacha20poly1305_init_simd();
+	simd_context_t simd_context = simd_get();
 	bool success = true;
 	size_t i;
 
@@ -1507,9 +1507,9 @@ bool __init poly1305_selftest(void)
 
 		memset(out, 0, sizeof(out));
 		memset(&poly1305, 0, sizeof(poly1305));
-		poly1305_init(&poly1305, key, have_simd);
-		poly1305_update(&poly1305, in, inlen, have_simd);
-		poly1305_finish(&poly1305, out, have_simd);
+		poly1305_init(&poly1305, key, simd_context);
+		poly1305_update(&poly1305, in, inlen, simd_context);
+		poly1305_finish(&poly1305, out, simd_context);
 		if (memcmp(out, expected, expectedlen)) {
 			pr_info("poly1305 self-test %zu: FAIL\n", i + 1);
 			success = false;
@@ -1518,10 +1518,10 @@ bool __init poly1305_selftest(void)
 		if (inlen > 16) {
 			memset(out, 0, sizeof(out));
 			memset(&poly1305, 0, sizeof(poly1305));
-			poly1305_init(&poly1305, key, have_simd);
-			poly1305_update(&poly1305, in, 1, have_simd);
-			poly1305_update(&poly1305, in + 1, inlen - 1, have_simd);
-			poly1305_finish(&poly1305, out, have_simd);
+			poly1305_init(&poly1305, key, simd_context);
+			poly1305_update(&poly1305, in, 1, simd_context);
+			poly1305_update(&poly1305, in + 1, inlen - 1, simd_context);
+			poly1305_finish(&poly1305, out, simd_context);
 			if (memcmp(out, expected, expectedlen)) {
 				pr_info("poly1305 self-test %zu/1+(N-1): FAIL\n", i + 1);
 				success = false;
@@ -1533,10 +1533,10 @@ bool __init poly1305_selftest(void)
 
 			memset(out, 0, sizeof(out));
 			memset(&poly1305, 0, sizeof(poly1305));
-			poly1305_init(&poly1305, key, have_simd);
-			poly1305_update(&poly1305, in, half, have_simd);
-			poly1305_update(&poly1305, in + half, inlen - half, have_simd);
-			poly1305_finish(&poly1305, out, have_simd);
+			poly1305_init(&poly1305, key, simd_context);
+			poly1305_update(&poly1305, in, half, simd_context);
+			poly1305_update(&poly1305, in + half, inlen - half, simd_context);
+			poly1305_finish(&poly1305, out, simd_context);
 			if (memcmp(out, expected, expectedlen)) {
 				pr_info("poly1305 self-test %zu/2: FAIL\n", i + 1);
 				success = false;
@@ -1545,10 +1545,10 @@ bool __init poly1305_selftest(void)
 			for (half = 16; half < inlen; half += 16) {
 				memset(out, 0, sizeof(out));
 				memset(&poly1305, 0, sizeof(poly1305));
-				poly1305_init(&poly1305, key, have_simd);
-				poly1305_update(&poly1305, in, half, have_simd);
-				poly1305_update(&poly1305, in + half, inlen - half, have_simd);
-				poly1305_finish(&poly1305, out, have_simd);
+				poly1305_init(&poly1305, key, simd_context);
+				poly1305_update(&poly1305, in, half, simd_context);
+				poly1305_update(&poly1305, in + half, inlen - half, simd_context);
+				poly1305_finish(&poly1305, out, simd_context);
 				if (memcmp(out, expected, expectedlen)) {
 					pr_info("poly1305 self-test %zu/%zu+%zu: FAIL\n", i + 1, half, inlen - half);
 					success = false;
@@ -1556,7 +1556,7 @@ bool __init poly1305_selftest(void)
 			}
 		}
 	}
-	chacha20poly1305_deinit_simd(have_simd);
+	simd_put(simd_context);
 
 	if (success)
 		pr_info("poly1305 self-tests: pass\n");

@@ -1,10 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0
  *
  * Copyright (C) 2015-2018 Jason A. Donenfeld <Jason@zx2c4.com>. All Rights Reserved.
- *
- * See doc/protocol.md and https://github.com/trevp/noise/blob/master/noise.md for more info
  */
-
 #ifndef _WG_NOISE_H
 #define _WG_NOISE_H
 
@@ -16,7 +13,7 @@
 #include <linux/atomic.h>
 #include <linux/rwsem.h>
 #include <linux/mutex.h>
-#include <linux/jiffies.h>
+#include <linux/ktime.h>
 #include <linux/kref.h>
 
 union noise_counter {
@@ -98,7 +95,7 @@ struct wireguard_device;
 void noise_init(void);
 bool noise_handshake_init(struct noise_handshake *handshake, struct noise_static_identity *static_identity, const u8 peer_public_key[NOISE_PUBLIC_KEY_LEN], const u8 peer_preshared_key[NOISE_SYMMETRIC_KEY_LEN], struct wireguard_peer *peer);
 void noise_handshake_clear(struct noise_handshake *handshake);
-void noise_keypair_put(struct noise_keypair *keypair);
+void noise_keypair_put(struct noise_keypair *keypair, bool unreference_now);
 struct noise_keypair *noise_keypair_get(struct noise_keypair *keypair);
 void noise_keypairs_clear(struct noise_keypairs *keypairs);
 bool noise_received_with_keypair(struct noise_keypairs *keypairs, struct noise_keypair *received_keypair);

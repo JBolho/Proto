@@ -7,30 +7,36 @@
 #include "peer.h"
 
 struct allowedips_node {
-	struct wireguard_peer *peer;
+	struct wireguard_peer __rcu *peer;
 	struct rcu_head rcu;
 	struct allowedips_node __rcu *bit[2];
 	/* While it may seem scandalous that we waste space for v4,
 	 * we're alloc'ing to the nearest power of 2 anyway, so this
 	 * doesn't actually make a difference.
 	 */
-	union {
-		__be64 v6[2];
-		__be32 v4;
-		u8 bits[16];
-	};
+	u8 bits[16] __aligned(__alignof(u64));
 	u8 cidr, bit_at_a, bit_at_b;
 };
 
-static void copy_and_assign_cidr(struct allowedips_node *node, const u8 *src, u8 cidr)
+static __always_inline void swap_endian(u8 *dst, const u8 *src, u8 bits)
+{
+	if (bits == 32)
+		*(u32 *)dst = be32_to_cpu(*(const __be32 *)src);
+	else if (bits == 128) {
+		((u64 *)dst)[0] = be64_to_cpu(((const __be64 *)src)[0]);
+		((u64 *)dst)[1] = be64_to_cpu(((const __be64 *)src)[1]);
+	}
+}
+
+static void copy_and_assign_cidr(struct allowedips_node *node, const u8 *src, u8 cidr, u8 bits)
 {
 	node->cidr = cidr;
-	node->bit_at_a = cidr / 8;
-	node->bit_at_b = 7 - (cidr % 8);
-	if (cidr) {
-		memcpy(node->bits, src, (cidr + 7) / 8);
-		node->bits[(cidr + 7) / 8 - 1] &= ~0U << ((8 - (cidr % 8)) % 8);
-	}
+	node->bit_at_a = cidr / 8U;
+#ifdef __LITTLE_ENDIAN
+	node->bit_at_a ^= (bits / 8U - 1U) % 8U;
+#endif
+	node->bit_at_b = 7U - (cidr % 8U);
+	memcpy(node->bits, src, bits / 8U);
 }
 
 #define choose_node(parent, key) parent->bit[(key[parent->bit_at_a] >> parent->bit_at_b) & 1]
@@ -40,43 +46,50 @@ static void node_free_rcu(struct rcu_head *rcu)
 	kfree(container_of(rcu, struct allowedips_node, rcu));
 }
 
-#define push(stack, p, len) ({ \
+#define push_rcu(stack, p, len) ({ \
 	if (rcu_access_pointer(p)) { \
 		BUG_ON(len >= 128); \
-		stack[len++] = rcu_dereference_protected(p, lockdep_is_held(lock)); \
+		stack[len++] = rcu_dereference_raw(p); \
 	} \
 	true; \
 })
-static void free_root_node(struct allowedips_node __rcu *top, struct mutex *lock)
+static void root_free_rcu(struct rcu_head *rcu)
 {
-	struct allowedips_node *stack[128], *node;
-	unsigned int len;
+	struct allowedips_node *node, *stack[128] = { container_of(rcu, struct allowedips_node, rcu) };
+	unsigned int len = 1;
 
-	for (len = 0, push(stack, top, len); len > 0 && (node = stack[--len]) && push(stack, node->bit[0], len) && push(stack, node->bit[1], len);)
-		call_rcu_bh(&node->rcu, node_free_rcu);
+	while (len > 0 && (node = stack[--len]) && push_rcu(stack, node->bit[0], len) && push_rcu(stack, node->bit[1], len))
+		kfree(node);
 }
 
-static int walk_by_peer(struct allowedips_node __rcu *top, int family, struct allowedips_cursor *cursor, struct wireguard_peer *peer, int (*func)(void *ctx, const u8 *ip, u8 cidr, int family), void *ctx, struct mutex *lock)
+static int walk_by_peer(struct allowedips_node __rcu *top, u8 bits, struct allowedips_cursor *cursor, struct wireguard_peer *peer, int (*func)(void *ctx, const u8 *ip, u8 cidr, int family), void *ctx, struct mutex *lock)
 {
 	struct allowedips_node *node;
 	int ret;
+	u8 ip[16] __aligned(__alignof(u64));
 
 	if (!rcu_access_pointer(top))
 		return 0;
 
 	if (!cursor->len)
-		push(cursor->stack, top, cursor->len);
+		push_rcu(cursor->stack, top, cursor->len);
 
-	for (; cursor->len > 0 && (node = cursor->stack[cursor->len - 1]); --cursor->len, push(cursor->stack, node->bit[0], cursor->len), push(cursor->stack, node->bit[1], cursor->len)) {
-		if (node->peer != peer)
+	for (; cursor->len > 0 && (node = cursor->stack[cursor->len - 1]); --cursor->len, push_rcu(cursor->stack, node->bit[0], cursor->len), push_rcu(cursor->stack, node->bit[1], cursor->len)) {
+		if (rcu_dereference_protected(node->peer, lockdep_is_held(lock)) != peer)
 			continue;
-		ret = func(ctx, node->bits, node->cidr, family);
+
+		swap_endian(ip, node->bits, bits);
+		memset(ip + (node->cidr + 7U) / 8U, 0, (bits / 8U) - ((node->cidr + 7U) / 8U));
+		if (node->cidr)
+			ip[(node->cidr + 7U) / 8U - 1U] &= ~0U << (-node->cidr % 8U);
+
+		ret = func(ctx, ip, node->cidr, bits == 32 ? AF_INET : AF_INET6);
 		if (ret)
 			return ret;
 	}
 	return 0;
 }
-#undef push
+#undef push_rcu
 
 #define ref(p) rcu_access_pointer(p)
 #define deref(p) rcu_dereference_protected(*p, lockdep_is_held(lock))
@@ -106,8 +119,8 @@ static void walk_remove_by_peer(struct allowedips_node __rcu **top, struct wireg
 			if (ref(node->bit[1]))
 				push(&node->bit[1]);
 		} else {
-			if (node->peer == peer) {
-				node->peer = NULL;
+			if (rcu_dereference_protected(node->peer, lockdep_is_held(lock)) == peer) {
+				RCU_INIT_POINTER(node->peer, NULL);
 				if (!node->bit[0] || !node->bit[1]) {
 					rcu_assign_pointer(*nptr, deref(&node->bit[!ref(node->bit[0])]));
 					call_rcu_bh(&node->rcu, node_free_rcu);
@@ -124,15 +137,15 @@ static void walk_remove_by_peer(struct allowedips_node __rcu **top, struct wireg
 
 static __always_inline unsigned int fls128(u64 a, u64 b)
 {
-	return a ? fls64(a) + 64 : fls64(b);
+	return a ? fls64(a) + 64U : fls64(b);
 }
 
 static __always_inline u8 common_bits(const struct allowedips_node *node, const u8 *key, u8 bits)
 {
 	if (bits == 32)
-		return 32 - fls(be32_to_cpu(*(const __be32 *)node->bits ^ *(const __be32 *)key));
+		return 32U - fls(*(const u32 *)node->bits ^ *(const u32 *)key);
 	else if (bits == 128)
-		return 128 - fls128(be64_to_cpu(*(const __be64 *)&node->bits[0] ^ *(const __be64 *)&key[0]), be64_to_cpu(*(const __be64 *)&node->bits[8] ^ *(const __be64 *)&key[8]));
+		return 128U - fls128(*(const u64 *)&node->bits[0] ^ *(const u64 *)&key[0], *(const u64 *)&node->bits[8] ^ *(const u64 *)&key[8]);
 	return 0;
 }
 
@@ -148,7 +161,7 @@ static __always_inline struct allowedips_node *find_node(struct allowedips_node 
 	struct allowedips_node *node = trie, *found = NULL;
 
 	while (node && prefix_matches(node, key, bits)) {
-		if (node->peer)
+		if (rcu_access_pointer(node->peer))
 			found = node;
 		if (node->cidr == bits)
 			break;
@@ -158,15 +171,22 @@ static __always_inline struct allowedips_node *find_node(struct allowedips_node 
 }
 
 /* Returns a strong reference to a peer */
-static __always_inline struct wireguard_peer *lookup(struct allowedips_node __rcu *root, u8 bits, const void *ip)
+static __always_inline struct wireguard_peer *lookup(struct allowedips_node __rcu *root, u8 bits, const void *be_ip)
 {
 	struct wireguard_peer *peer = NULL;
 	struct allowedips_node *node;
+	u8 ip[16] __aligned(__alignof(u64));
+
+	swap_endian(ip, be_ip, bits);
 
 	rcu_read_lock_bh();
+retry:
 	node = find_node(rcu_dereference_bh(root), bits, ip);
-	if (node)
-		peer = peer_get(node->peer);
+	if (node) {
+		peer = peer_get_maybe_zero(rcu_dereference_bh(node->peer));
+		if (!peer)
+			goto retry;
+	}
 	rcu_read_unlock_bh();
 	return peer;
 }
@@ -189,32 +209,35 @@ static inline bool node_placement(struct allowedips_node __rcu *trie, const u8 *
 	return exact;
 }
 
-static int add(struct allowedips_node __rcu **trie, u8 bits, const u8 *key, u8 cidr, struct wireguard_peer *peer, struct mutex *lock)
+static int add(struct allowedips_node __rcu **trie, u8 bits, const u8 *be_key, u8 cidr, struct wireguard_peer *peer, struct mutex *lock)
 {
 	struct allowedips_node *node, *parent, *down, *newnode;
+	u8 key[16] __aligned(__alignof(u64));
 
 	if (unlikely(cidr > bits || !peer))
 		return -EINVAL;
+
+	swap_endian(key, be_key, bits);
 
 	if (!rcu_access_pointer(*trie)) {
 		node = kzalloc(sizeof(*node), GFP_KERNEL);
 		if (!node)
 			return -ENOMEM;
-		node->peer = peer;
-		copy_and_assign_cidr(node, key, cidr);
+		RCU_INIT_POINTER(node->peer, peer);
+		copy_and_assign_cidr(node, key, cidr, bits);
 		rcu_assign_pointer(*trie, node);
 		return 0;
 	}
 	if (node_placement(*trie, key, cidr, bits, &node, lock)) {
-		node->peer = peer;
+		rcu_assign_pointer(node->peer, peer);
 		return 0;
 	}
 
 	newnode = kzalloc(sizeof(*newnode), GFP_KERNEL);
 	if (!newnode)
 		return -ENOMEM;
-	newnode->peer = peer;
-	copy_and_assign_cidr(newnode, key, cidr);
+	RCU_INIT_POINTER(newnode->peer, peer);
+	copy_and_assign_cidr(newnode, key, cidr, bits);
 
 	if (!node)
 		down = rcu_dereference_protected(*trie, lockdep_is_held(lock));
@@ -240,7 +263,7 @@ static int add(struct allowedips_node __rcu **trie, u8 bits, const u8 *key, u8 c
 			kfree(newnode);
 			return -ENOMEM;
 		}
-		copy_and_assign_cidr(node, newnode->bits, cidr);
+		copy_and_assign_cidr(node, newnode->bits, cidr, bits);
 
 		rcu_assign_pointer(choose_node(node, down->bits), down);
 		rcu_assign_pointer(choose_node(node, newnode->bits), newnode);
@@ -260,11 +283,14 @@ void allowedips_init(struct allowedips *table)
 
 void allowedips_free(struct allowedips *table, struct mutex *lock)
 {
+	struct allowedips_node __rcu *old4 = table->root4, *old6 = table->root6;
 	++table->seq;
-	free_root_node(table->root4, lock);
-	rcu_assign_pointer(table->root4, NULL);
-	free_root_node(table->root6, lock);
-	rcu_assign_pointer(table->root6, NULL);
+	RCU_INIT_POINTER(table->root4, NULL);
+	RCU_INIT_POINTER(table->root6, NULL);
+	if (rcu_access_pointer(old4))
+		call_rcu_bh(&rcu_dereference_protected(old4, lockdep_is_held(lock))->rcu, root_free_rcu);
+	if (rcu_access_pointer(old6))
+		call_rcu_bh(&rcu_dereference_protected(old6, lockdep_is_held(lock))->rcu, root_free_rcu);
 }
 
 int allowedips_insert_v4(struct allowedips *table, const struct in_addr *ip, u8 cidr, struct wireguard_peer *peer, struct mutex *lock)
@@ -296,13 +322,13 @@ int allowedips_walk_by_peer(struct allowedips *table, struct allowedips_cursor *
 		return 0;
 
 	if (!cursor->second_half) {
-		ret = walk_by_peer(table->root4, AF_INET, cursor, peer, func, ctx, lock);
+		ret = walk_by_peer(table->root4, 32, cursor, peer, func, ctx, lock);
 		if (ret)
 			return ret;
 		cursor->len = 0;
 		cursor->second_half = true;
 	}
-	return walk_by_peer(table->root6, AF_INET6, cursor, peer, func, ctx, lock);
+	return walk_by_peer(table->root6, 128, cursor, peer, func, ctx, lock);
 }
 
 /* Returns a strong reference to a peer */

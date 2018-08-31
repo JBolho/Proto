@@ -169,6 +169,19 @@ ip1 link set wg0 mtu $big_mtu
 ip2 link set wg0 mtu $big_mtu
 tests
 
+# Test that route MTUs work with the padding
+ip1 link set wg0 mtu 1300
+ip2 link set wg0 mtu 1300
+n1 wg set wg0 peer "$pub2" endpoint 127.0.0.1:2
+n2 wg set wg0 peer "$pub1" endpoint 127.0.0.1:1
+n0 iptables -A INPUT -m length --length 1360 -j DROP
+n1 ip route add 192.168.241.2/32 dev wg0 mtu 1299
+n2 ip route add 192.168.241.1/32 dev wg0 mtu 1299
+n2 ping -c 1 -W 1 -s 1269 192.168.241.1
+n2 ip route delete 192.168.241.1/32 dev wg0 mtu 1299
+n1 ip route delete 192.168.241.2/32 dev wg0 mtu 1299
+n0 iptables -F INPUT
+
 ip1 link set wg0 mtu $orig_mtu
 ip2 link set wg0 mtu $orig_mtu
 
@@ -424,6 +437,30 @@ done
 config+=( "[Peer]" "PublicKey=$(wg genkey)" "AllowedIPs=255.2.3.4/32,abcd::255/128" )
 n0 wg setconf wg0 <(printf '%s\n' "${config[@]}")
 n0 wg showconf wg0 > /dev/null
+ip0 link del wg0
+
+allowedips=( )
+for i in {1..197}; do
+        allowedips+=( abcd::$i )
+done
+saved_ifs="$IFS"
+IFS=,
+allowedips="${allowedips[*]}"
+IFS="$saved_ifs"
+ip0 link add wg0 type wireguard
+n0 wg set wg0 peer "$pub1"
+n0 wg set wg0 peer "$pub2" allowed-ips "$allowedips"
+{
+	read -r pub allowedips
+	[[ $pub == "$pub1" && $allowedips == "(none)" ]]
+	read -r pub allowedips
+	[[ $pub == "$pub2" ]]
+	i=0
+	for _ in $allowedips; do
+		((++i))
+	done
+	((i == 197))
+} < <(n0 wg show wg0 allowed-ips)
 ip0 link del wg0
 
 ! n0 wg show doesnotexist || false

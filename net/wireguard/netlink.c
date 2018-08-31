@@ -110,7 +110,7 @@ static int get_peer(struct wireguard_peer *peer, unsigned int index, struct allo
 		if (fail)
 			goto err;
 
-		if (nla_put(skb, WGPEER_A_LAST_HANDSHAKE_TIME, sizeof(struct timespec), &peer->walltime_last_handshake) || nla_put_u16(skb, WGPEER_A_PERSISTENT_KEEPALIVE_INTERVAL, peer->persistent_keepalive_interval / HZ) ||
+		if (nla_put(skb, WGPEER_A_LAST_HANDSHAKE_TIME, sizeof(struct timespec), &peer->walltime_last_handshake) || nla_put_u16(skb, WGPEER_A_PERSISTENT_KEEPALIVE_INTERVAL, peer->persistent_keepalive_interval) ||
 				nla_put_u64_64bit(skb, WGPEER_A_TX_BYTES, peer->tx_bytes, WGPEER_A_UNSPEC) || nla_put_u64_64bit(skb, WGPEER_A_RX_BYTES, peer->rx_bytes, WGPEER_A_UNSPEC))
 			goto err;
 
@@ -165,13 +165,15 @@ static int get_device_start(struct netlink_callback *cb)
 static int get_device_dump(struct sk_buff *skb, struct netlink_callback *cb)
 {
 	struct wireguard_device *wg = (struct wireguard_device *)cb->args[0];
-	struct wireguard_peer *peer, *next_peer_cursor = NULL, *last_peer_cursor = (struct wireguard_peer *)cb->args[1];
+	struct wireguard_peer *peer, *next_peer_cursor, *last_peer_cursor;
 	struct allowedips_cursor *rt_cursor = (struct allowedips_cursor *)cb->args[2];
 	unsigned int peer_idx = 0;
 	struct nlattr *peers_nest;
 	bool done = true;
 	void *hdr;
 	int ret = -EMSGSIZE;
+
+	next_peer_cursor = last_peer_cursor = (struct wireguard_peer *)cb->args[1];
 
 	rtnl_lock();
 	mutex_lock(&wg->device_update_lock);
@@ -220,9 +222,9 @@ static int get_device_dump(struct sk_buff *skb, struct netlink_callback *cb)
 	nla_nest_end(skb, peers_nest);
 
 out:
+	if (!ret && !done && next_peer_cursor)
+		peer_get(next_peer_cursor);
 	peer_put(last_peer_cursor);
-	if (!ret && !done)
-		next_peer_cursor = peer_rcu_get(next_peer_cursor);
 	mutex_unlock(&wg->device_update_lock);
 	rtnl_unlock();
 
@@ -326,9 +328,11 @@ static int set_peer(struct wireguard_device *wg, struct nlattr **attrs)
 		up_read(&wg->static_identity.lock);
 
 		ret = -ENOMEM;
-		peer = peer_rcu_get(peer_create(wg, public_key, preshared_key));
+		peer = peer_create(wg, public_key, preshared_key);
 		if (!peer)
 			goto out;
+		/* Take additional reference, as though we've just been looked up. */
+		peer_get(peer);
 	}
 
 	ret = 0;
@@ -376,7 +380,7 @@ static int set_peer(struct wireguard_device *wg, struct nlattr **attrs)
 		const u16 persistent_keepalive_interval = nla_get_u16(attrs[WGPEER_A_PERSISTENT_KEEPALIVE_INTERVAL]);
 		const bool send_keepalive = !peer->persistent_keepalive_interval && persistent_keepalive_interval && netif_running(wg->dev);
 
-		peer->persistent_keepalive_interval = (unsigned long)persistent_keepalive_interval * HZ;
+		peer->persistent_keepalive_interval = persistent_keepalive_interval;
 		if (send_keepalive)
 			packet_send_keepalive(peer);
 	}
@@ -435,12 +439,14 @@ static int set_device(struct sk_buff *skb, struct genl_info *info)
 			}
 		}
 
+		down_write(&wg->static_identity.lock);
 		noise_set_static_identity_private_key(&wg->static_identity, private_key);
 		list_for_each_entry_safe(peer, temp, &wg->peer_list, peer_list) {
 			if (!noise_precompute_static_static(peer))
 				peer_remove(peer);
 		}
 		cookie_checker_precompute_device_keys(&wg->cookie_checker);
+		up_write(&wg->static_identity.lock);
 	}
 
 	if (info->attrs[WGDEVICE_A_PEERS]) {
