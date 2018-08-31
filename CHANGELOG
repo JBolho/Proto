@@ -1,3 +1,9 @@
+[Current Dev Status]
+
+- Upgrade to Linaro GCC 5.5-2017.10 and Optimize to big.LITTLE
+- Upstreamed to 4.4.75
+- Port HiSi JPEG Processing Engine
+
 Version 2.5R - 081718 [GPU Supercharger Edition]
 
 - GPU - Reduce TLB Pressure and Prevent Memory Fragmentation
