@@ -2,7 +2,7 @@ Proto Kernel for the Huawei Honor 9, Huawei P10 and P10+
 
 Based on official Huawei Source Code
 
-Compatible with Stock EMUI8 (Oreo) Firmware and Treble 8.1 Roms
+Compatible with Stock EMUI8 (Oreo) Firmware, Treble 8.1 and 9.0 Roms
 
 Credits:
 
