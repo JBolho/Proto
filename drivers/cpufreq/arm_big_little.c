@@ -192,7 +192,7 @@ bL_cpufreq_set_rate(u32 cpu, u32 old_cluster, u32 new_cluster, u32 rate)
 
 		mutex_unlock(&cluster_lock[new_cluster]);
 
-		return ret; /* [false alarm]:fortify */
+		return ret;
 	}
 
 	mutex_unlock(&cluster_lock[new_cluster]);
@@ -274,7 +274,7 @@ static inline u32 get_table_count(struct cpufreq_frequency_table *table)
 	for (count = 0; table[count].frequency != CPUFREQ_TABLE_END; count++)
 		;
 
-	return count; /* [false alarm]:fortify */
+	return count;
 }
 
 /* get the minimum frequency in the cpufreq_frequency_table */
@@ -342,7 +342,6 @@ static void _put_cluster_clk_and_freq_table(struct device *cpu_dev)
 
 	clk_put(clk[cluster]);
 	dev_pm_opp_free_cpufreq_table(cpu_dev, &freq_table[cluster]);
-
 	if (arm_bL_ops->free_opp_table)
 		arm_bL_ops->free_opp_table(cpu_dev);
 
@@ -486,9 +485,8 @@ static int get_cluster_clk_and_freq_table(struct device *cpu_dev)
 
 	/* Assuming 2 cluster, set clk_big_min and clk_little_max */
 	clk_big_min = get_table_min(freq_table[0]);
-	/*lint -e666*/
 	clk_little_max = VIRT_FREQ(1, get_table_max(freq_table[1]));
-	/*lint +e666*/
+
 	pr_debug("%s: cluster: %d, clk_big_min: %d, clk_little_max: %d\n",
 			__func__, cluster, clk_big_min, clk_little_max);
 

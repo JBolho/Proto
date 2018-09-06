@@ -50,7 +50,6 @@
 #endif
 
 #ifdef CONFIG_BOOST_KILL
-extern void hisi_get_fast_cpus(struct cpumask *cpumask);
 
 /* Add apportunity to config enable/disable boost
  * killing action
@@ -959,7 +958,6 @@ static void complete_signal(int sig, struct task_struct *p, int group)
 				if (sysctl_boost_killing) {
 					if (can_nice(t, -20))
 						set_user_nice(t, -20);
-					hisi_get_fast_cpus(&new_mask);
 					cpumask_copy(&t->cpus_allowed, &new_mask);
 					t->nr_cpus_allowed = cpumask_weight(&new_mask);
 				}

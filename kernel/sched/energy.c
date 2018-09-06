@@ -46,30 +46,6 @@ static void free_resources(void)
 	}
 }
 
-static void dump_energy_model(void)
-{
-	int cpu, sd_level, idx;
-	struct sched_group_energy *sge;
-
-	for_each_possible_cpu(cpu) {
-		for_each_possible_sd_level(sd_level) {
-			sge = sge_array[cpu][sd_level];
-			if (!sge)
-				continue;
-
-			pr_info("EAS: cpu %d sd_level = %d\n", cpu, sd_level);
-			for (idx = 0; idx < sge->nr_idle_states; idx++)
-				pr_info("Idle state [%d] = p %lu\n", idx,
-					sge->idle_states[idx].power);
-
-			for (idx = 0; idx < sge->nr_cap_states; idx++)
-				pr_info("Idle state [%d] = c %lu p %lu\n", idx,
-					sge->cap_states[idx].cap,
-					sge->cap_states[idx].power);
-		}
-	}
-}
-
 void init_sched_energy_costs(void)
 {
 	struct device_node *cn, *cp;
@@ -139,8 +115,6 @@ void init_sched_energy_costs(void)
 			sge_array[cpu][sd_level] = sge;
 		}
 	}
-
-	dump_energy_model();
 
 	pr_info("Sched-energy-costs installed from DT\n");
 	return;
