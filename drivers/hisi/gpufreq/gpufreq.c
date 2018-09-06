@@ -22,7 +22,7 @@
 
 
 #define KHz		(1000)
-#define LOCAL_BUF_MAX		(256)
+#define LOCAL_BUF_MAX		(512)
 
 
 
