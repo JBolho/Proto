@@ -20,8 +20,6 @@ DRIVER_PATH=$(HI1102_DRIVER_SRC_PATH)/$(DRIVER_FLODER)
 include $(DRIVER_PATH)/$(HI1102_COMM_DEFCONFIG)
 include $(DRIVER_PATH)/$(PLAT_DEFCONFIG_FILE)
 
-$(warning defconfig: $(DRIVER_PATH)/$(PLAT_DEFCONFIG_FILE))
-
 oal-objs := oal_bus_if.o oal_main.o oal_mem.o oal_net.o oal_hardware.o oal_schedule.o oal_pci_if.o oal_aes.o oal_kernel_file.o oal_cfg80211.o oal_sdio_host.o oal_profiling.o oal_hcc_host.o oal_hcc_test.o oal_softwdt.o oal_dft.o
 oal-objs := $(addprefix oal/,$(oal-objs))
 
@@ -166,10 +164,6 @@ HI110X_VERSION="\"commitId:$(HI110X_VER_COMMIT_ID), commitTime:$(HI110X_VER_COMM
 
 KBUILD_CFLAGS += -DHI110X_DRV_VERSION=$(HI110X_VERSION)
 endif
-$(warning HI110X_VER_COMMIT_ID: $(HI110X_VER_COMMIT_ID))
-$(warning HI110X_VER_COMMIT_TIME: $(HI110X_VER_COMMIT_TIME))
-$(warning HI110X_VERSION: $(HI110X_VERSION))
-#$(warning INCLUDE: $(HI1102_INCLUDES))
 
 EXTRA_CFLAGS = $(HI1102_INCLUDES)
 EXTRA_CFLAGS += $(COPTS) $(KBUILD_CFLAGS)
