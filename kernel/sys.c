@@ -1193,9 +1193,8 @@ SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 		return -EFAULT;
 	if (override_architecture(name))
 		return -EFAULT;
-        if (is_compat_task() &&
-            copy_to_user(name->machine, "armv7l", strlen("armv7l") + 1))
-                errno = -EFAULT;
+	if (is_compat_task() && copy_to_user(name->machine, "armv7l", strlen("armv7l") + 1))
+		return -EFAULT;
 	return 0;
 }
 
