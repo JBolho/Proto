@@ -1,8 +1,10 @@
-[Current Dev Status]
+Version 3.0R - 092018
 
-- Upgrade to Linaro GCC 5.5-2017.10
-- Upstreamed to 4.4.76
+- Upgrade to Linaro GCC 5.5-2017.10 (Keep Linaro GCC 4.9 for CN versions)
+- Upstreamed to 4.4.103 - Kernel now on par with stock K970
+- Increase Buffer on GPUFreq driver
 - Port HiSi JPEG Processing Engine
+- Update Wireguard to 0.0.20180910
 
 Version 2.5R - 081718 [GPU Supercharger Edition]
 
