@@ -12,13 +12,11 @@ obj-$(CONFIG_LCDKIT_DRIVER) += hisi/
 EXTRA_CFLAGS += -Idrivers/devkit/lcdkit/core/common/hisi
 EXTRA_CFLAGS += -Idrivers/video/fbdev/hisi/dss
 EXTRA_CFLAGS += -Idrivers/staging/android
-$(info find lcdkit hisi folder, include it now!)
 endif
 
 ifndef CONFIG_HUAWEI_DEVKIT_HISI
 obj-$(CONFIG_LCDKIT_DRIVER) += qcom/
 EXTRA_CFLAGS += -Idrivers/devkit/lcdkit/core/common/qcom
-$(info find lcdkit qcom folder, include it now! )
 endif
 
 #for debug!!
