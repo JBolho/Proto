@@ -252,21 +252,6 @@ config CPU_FREQ_GOV_SCHEDUTIL
 
 	  If in doubt, say N.
 
-comment "CPU frequency scaling drivers"
-
-config CPUFREQ_DT
-	tristate "Generic DT based cpufreq driver"
-	depends on HAVE_CLK && OF
-	# if CPU_THERMAL is on and THERMAL=m, CPUFREQ_DT cannot be =y:
-	depends on !CPU_THERMAL || THERMAL
-	select PM_OPP
-	help
-	  This adds a generic DT based cpufreq driver for frequency management.
-	  It supports both uniprocessor (UP) and symmetric multiprocessor (SMP)
-	  systems which share clock and voltage across all CPUs.
-
-	  If in doubt, say N.
-
 config CPU_FREQ_GOV_BLU_ACTIVE
 	tristate "'blu_active' cpufreq policy governor"
 	help
@@ -279,6 +264,21 @@ config CPU_FREQ_GOV_BLU_ACTIVE
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called cpufreq_blu_active.
+
+	  If in doubt, say N.
+
+comment "CPU frequency scaling drivers"
+
+config CPUFREQ_DT
+	tristate "Generic DT based cpufreq driver"
+	depends on HAVE_CLK && OF
+	# if CPU_THERMAL is on and THERMAL=m, CPUFREQ_DT cannot be =y:
+	depends on !CPU_THERMAL || THERMAL
+	select PM_OPP
+	help
+	  This adds a generic DT based cpufreq driver for frequency management.
+	  It supports both uniprocessor (UP) and symmetric multiprocessor (SMP)
+	  systems which share clock and voltage across all CPUs.
 
 	  If in doubt, say N.
 
