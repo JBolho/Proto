@@ -1,6 +1,8 @@
-[Current Dev Status] - 092218 - 3.5 Beta 1
+[Current Dev Status] - 092618 - 3.5 Beta 4
 
-- Upstream to 4.4.116
+- Upstream to 4.4.124
+- Implement Schedutil Governor
+- Add Tuned Zen I/O Scheduler
 
 Version 3.0R - 092018
 
