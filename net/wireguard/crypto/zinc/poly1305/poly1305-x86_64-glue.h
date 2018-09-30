@@ -1,9 +1,8 @@
-/* SPDX-License-Identifier: GPL-2.0
- *
+/* SPDX-License-Identifier: GPL-2.0 OR MIT */
+/*
  * Copyright (C) 2015-2018 Jason A. Donenfeld <Jason@zx2c4.com>. All Rights Reserved.
  */
 
-#include <zinc/poly1305.h>
 #include <asm/cpufeature.h>
 #include <asm/processor.h>
 #include <asm/intel-family.h>
@@ -33,7 +32,7 @@ static bool poly1305_use_avx __ro_after_init;
 static bool poly1305_use_avx2 __ro_after_init;
 static bool poly1305_use_avx512 __ro_after_init;
 
-void __init poly1305_fpu_init(void)
+static void __init poly1305_fpu_init(void)
 {
 	poly1305_use_avx =
 		boot_cpu_has(X86_FEATURE_AVX) &&
@@ -55,57 +54,106 @@ void __init poly1305_fpu_init(void)
 }
 
 static inline bool poly1305_init_arch(void *ctx,
-				      const u8 key[POLY1305_KEY_SIZE],
-				      simd_context_t simd_context)
+				      const u8 key[POLY1305_KEY_SIZE])
 {
 	poly1305_init_x86_64(ctx, key);
 	return true;
 }
 
+struct poly1305_arch_internal {
+	union {
+		struct {
+			u32 h[5];
+			u32 is_base2_26;
+		};
+		u64 hs[3];
+	};
+	u64 r[2];
+	u64 pad;
+	struct { u32 r2, r1, r4, r3; } rn[9];
+};
+
+static void convert_to_base2_64(void *ctx)
+{
+	struct poly1305_arch_internal *state = ctx;
+	u32 cy;
+
+	if (!state->is_base2_26)
+		return;
+
+	cy = state->h[0] >> 26; state->h[0] &= 0x3ffffff; state->h[1] += cy;
+	cy = state->h[1] >> 26; state->h[1] &= 0x3ffffff; state->h[2] += cy;
+	cy = state->h[2] >> 26; state->h[2] &= 0x3ffffff; state->h[3] += cy;
+	cy = state->h[3] >> 26; state->h[3] &= 0x3ffffff; state->h[4] += cy;
+	state->hs[0] = ((u64)state->h[2] << 52) | ((u64)state->h[1] << 26) | state->h[0];
+	state->hs[1] = ((u64)state->h[4] << 40) | ((u64)state->h[3] << 14) | (state->h[2] >> 12);
+	state->hs[2] = state->h[4] >> 24;
+#define ULT(a, b) ((a ^ ((a ^ b) | ((a - b) ^ b))) >> (sizeof(a) * 8 - 1))
+	cy = (state->hs[2] >> 2) + (state->hs[2] & ~3ULL);
+	state->hs[2] &= 3;
+	state->hs[0] += cy;
+	state->hs[1] += (cy = ULT(state->hs[0], cy));
+	state->hs[2] += ULT(state->hs[1], cy);
+#undef ULT
+	state->is_base2_26 = 0;
+}
+
 static inline bool poly1305_blocks_arch(void *ctx, const u8 *inp,
 					const size_t len, const u32 padbit,
-					simd_context_t simd_context)
+					simd_context_t *simd_context)
 {
+	struct poly1305_arch_internal *state = ctx;
+
+	if (!poly1305_use_avx ||
+	    (len < (POLY1305_BLOCK_SIZE * 18) && !state->is_base2_26) ||
+	    !simd_use(simd_context))
+		goto scalar;
+
 #ifdef CONFIG_AS_AVX512
-	if (poly1305_use_avx512 && simd_context == HAVE_FULL_SIMD)
+	if (poly1305_use_avx512) {
 		poly1305_blocks_avx512(ctx, inp, len, padbit);
-	else
+		return true;
+	}
 #endif
+
 #ifdef CONFIG_AS_AVX2
-	if (poly1305_use_avx2 && simd_context == HAVE_FULL_SIMD)
+	if (poly1305_use_avx2) {
 		poly1305_blocks_avx2(ctx, inp, len, padbit);
-	else
+		return true;
+	}
 #endif
+
 #ifdef CONFIG_AS_AVX
-	if (poly1305_use_avx && simd_context == HAVE_FULL_SIMD)
+	if (poly1305_use_avx) {
 		poly1305_blocks_avx(ctx, inp, len, padbit);
-	else
+		return true;
+	}
 #endif
-		poly1305_blocks_x86_64(ctx, inp, len, padbit);
+
+scalar:
+	convert_to_base2_64(ctx);
+	poly1305_blocks_x86_64(ctx, inp, len, padbit);
 	return true;
 }
 
 static inline bool poly1305_emit_arch(void *ctx, u8 mac[POLY1305_MAC_SIZE],
 				      const u32 nonce[4],
-				      simd_context_t simd_context)
+				      simd_context_t *simd_context)
 {
-#ifdef CONFIG_AS_AVX512
-	if (poly1305_use_avx512 && simd_context == HAVE_FULL_SIMD)
-		poly1305_emit_avx(ctx, mac, nonce);
-	else
-#endif
-#ifdef CONFIG_AS_AVX2
-	if (poly1305_use_avx2 && simd_context == HAVE_FULL_SIMD)
-		poly1305_emit_avx(ctx, mac, nonce);
-	else
-#endif
+	struct poly1305_arch_internal *state = ctx;
+
+	if (!poly1305_use_avx || !state->is_base2_26 ||!simd_use(simd_context))
+		goto scalar;
+
 #ifdef CONFIG_AS_AVX
-	if (poly1305_use_avx && simd_context == HAVE_FULL_SIMD)
+	if (poly1305_use_avx || poly1305_use_avx2 || poly1305_use_avx512) {
 		poly1305_emit_avx(ctx, mac, nonce);
-	else
+		return true;
+	}
 #endif
-		poly1305_emit_x86_64(ctx, mac, nonce);
+
+scalar:
+	convert_to_base2_64(ctx);
+	poly1305_emit_x86_64(ctx, mac, nonce);
 	return true;
 }
-
-#define HAVE_POLY1305_ARCH_IMPLEMENTATION
