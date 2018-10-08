@@ -1282,19 +1282,6 @@ config NET_NS
 
 endif # NAMESPACES
 
-config HISI_EAS_SCHED
-	bool "Hisilicon EAS scheduler optimizations"
-	default n
-	help
-	  Hisilicon EAS scheduler.
-
-config HISI_RT_OPT
-	bool "hisilicon rt-threads optimization"
-	depends on HISI_EAS_SCHED
-	default n
-	help
-	  Limit rt-threads to slow cpus for power saving.
-
 config SCHED_AUTOGROUP
 	bool "Automatic process group scheduling"
 	select CGROUPS
