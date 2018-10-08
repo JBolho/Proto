@@ -1,7 +1,8 @@
-Version 3.5FR - 093018 [Final Feature-Development Release]
+Version 3.5FR - 100818 [Final Feature-Development Release]
 
 - Upstream to 4.4.128
-- Implement Schedutil Governor
+- Rebase EAS to AOSP and Implement Schedutil Governor
+- Deprecate Sched Governor
 - Add Tuned Zen I/O Scheduler
 - Update Wireguard to 0.0.20180925
 
