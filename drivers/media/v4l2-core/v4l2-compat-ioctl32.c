@@ -88,7 +88,7 @@ static int get_v4l2_window32(struct v4l2_window *kp, struct v4l2_window32 __user
 
 static int put_v4l2_window32(struct v4l2_window *kp, struct v4l2_window32 __user *up)
 {
-	struct v4l2_clip __user *kclips;
+	struct v4l2_clip __user *kclips = kp->clips;
 	struct v4l2_clip32 __user *uclips;
 	u32 n = kp->clipcount;
 	compat_caddr_t p;
@@ -103,8 +103,6 @@ static int put_v4l2_window32(struct v4l2_window *kp, struct v4l2_window32 __user
 	if (!kp->clipcount)
 		return 0;
 
-	if (get_user(kclips, &kp->clips))
-		return -EFAULT;
 	if (get_user(p, &up->clips))
 		return -EFAULT;
 	uclips = compat_ptr(p);
@@ -778,8 +776,7 @@ static int put_v4l2_ext_controls32(struct file *file,
 	    put_user(kp->error_idx, &up->error_idx) ||
 	    copy_to_user(up->reserved, kp->reserved, sizeof(up->reserved)))
 		return -EFAULT;
-
-	if (!count || count > (U32_MAX/sizeof(*ucontrols)))
+	if (!kp->count)
 		return 0;
 
 	if (get_user(p, &up->controls))
