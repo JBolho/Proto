@@ -1,10 +1,14 @@
-Version 3.5FR - 100818 [Final Feature-Development Release]
+Version 5.0FR - 101118 [Final Feature-Development Release]
 
-- Upstream to 4.4.128
-- Rebase EAS to AOSP and Implement Schedutil Governor
+- Upstream to 4.4.159
+- Optimize build for big.LITTLE (GCC 5.5 only)
+- Rebase EAS to AOSP
+- Implement Schedutil Governor
+- Port Blu_Schedutil from OP6 Blu_Spark Kernel
 - Deprecate Sched Governor
+- Fix and Implement WALT
 - Add Tuned Zen I/O Scheduler
-- Update Wireguard to 0.0.20180925
+- Update Wireguard to latest (Automatic Fetch Script Added)
 
 Version 3.0R - 092018
 
