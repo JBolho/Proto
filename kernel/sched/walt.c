@@ -37,7 +37,7 @@ static __read_mostly unsigned int walt_window_stats_policy =
 	WINDOW_STATS_MAX_RECENT_AVG;
 static __read_mostly unsigned int walt_account_wait_time = 1;
 static __read_mostly unsigned int walt_freq_account_wait_time = 0;
-static __read_mostly unsigned int walt_io_is_busy = 0;
+static __read_mostly unsigned int walt_io_is_busy = 1;
 
 unsigned int sysctl_sched_walt_init_task_load_pct = 15;
 
@@ -48,8 +48,16 @@ bool __read_mostly walt_disabled = false;
  * Window size (in ns). Adjust for the tick size so that the window
  * rollover occurs just before the tick boundary.
  */
+#ifdef CONFIG_HZ_156
+/*
+ * Adjust for Proto's custom Kirin Timer frequency
+ */
+__read_mostly unsigned int walt_ravg_window =
+					    (15000000 / TICK_NSEC) * TICK_NSEC;
+#else
 __read_mostly unsigned int walt_ravg_window =
 					    (20000000 / TICK_NSEC) * TICK_NSEC;
+#endif
 #define MIN_SCHED_RAVG_WINDOW ((10000000 / TICK_NSEC) * TICK_NSEC)
 #define MAX_SCHED_RAVG_WINDOW ((1000000000 / TICK_NSEC) * TICK_NSEC)
 
