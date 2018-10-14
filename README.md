@@ -9,4 +9,5 @@ Credits:
 - Huawei/Honor
 - nutcasev15 for teaching me the ropes and heavily contributing to the development 
 - zxz0O0 @ XDA for help on Oreo boot structure and the Capacitive Buttons Fix
+- Dil3mm4 for the valuable help on the last stretch of Upstreaming
 - All the authored Devs for their awesome work and contributions
