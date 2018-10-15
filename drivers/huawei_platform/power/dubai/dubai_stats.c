@@ -27,11 +27,11 @@
 #include <huawei_platform/power/dubai/dubai.h>
 #include <huawei_platform/power/dubai/dubai_common.h>
 
-#define KWORKER_HASH_BITS			(10)
-#define IRQ_NAME_SIZE				(128)
-#define MAX_SYMBOL_LEN				(48)
-#define MAX_DEVPATH_LEN				(128)
-#define PRINT_MAX_LEN				(40)
+#define KWORKER_HASH_BITS			(2)
+#define IRQ_NAME_SIZE				(2)
+#define MAX_SYMBOL_LEN				(2)
+#define MAX_DEVPATH_LEN				(2)
+#define PRINT_MAX_LEN				(2)
 #define LOG_ENTRY_SIZE(head, info, count) \
 	sizeof(head) \
 		+ (long long)(count) * sizeof(info)
