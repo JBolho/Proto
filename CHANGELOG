@@ -1,6 +1,12 @@
-Version 5.0FR - 101118 [Final Feature-Development Release]
+__________________________________________________________________________
+
+- End of Active Feature Development - Maintenance Only
+__________________________________________________________________________
+
+Version 5.1F - 101518 [Final Feature-Development Release]
 
 - Upstream to 4.4.159
+- Break Huawei's D.U.B.A.I. functionality
 - Optimize build for big.LITTLE (GCC 5.5 only)
 - Rebase EAS to AOSP
 - Implement Schedutil Governor
@@ -9,6 +15,10 @@ Version 5.0FR - 101118 [Final Feature-Development Release]
 - Fix and Implement WALT
 - Add Tuned Zen I/O Scheduler
 - Update Wireguard to latest (Automatic Fetch Script Added)
+
+---------------------------------------------------
+History re-organized at this point and Branch moved
+---------------------------------------------------
 
 Version 3.0R - 092018
 
@@ -49,9 +59,9 @@ Version 2.0R - 062918 [Major Milestone Update]
 - Upgrade SchedTune Boost to v3
 - Update Wireguard to 0.0.20180620
 
-----------------------------------------------------------------
-History re-organized at this point and Branch moved to Proto2.0
-----------------------------------------------------------------
+---------------------------------------------------
+History re-organized at this point and Branch moved
+---------------------------------------------------
 
 Version 1.7.1R - 060218 [Minor Update]
 
@@ -67,9 +77,9 @@ Version 1.7R - 052818
 - Update Wireguard to 0.0.20180524
 - Make Wireguard Built-In instead of Module
 
-----------------------------------------------------------------
-History re-organized at this point and Branch moved to Proto8
-----------------------------------------------------------------
+---------------------------------------------------
+History re-organized at this point and Branch moved
+---------------------------------------------------
 
 Version 1.6R - 051918
 
